@@ -156,12 +156,19 @@ autenticar-se na janela oficial. Confira o resultado todo dia.
 
 ### Agendador de Tarefas do Windows
 
-Exemplo para rodar de segunda a sexta às 06:30 (ajuste os caminhos; use a conta
-autorizada, com sessão do Windows aberta para o navegador persistente):
+Antes, instale o pacote uma vez na pasta do projeto (dispensa `PYTHONPATH`) e
+crie a pasta de logs:
 
 ```bat
-schtasks /Create /TN "SEASIC Monitoramento" /SC WEEKLY /D MON,TUE,WED,THU,FRI /ST 06:30 ^
-  /TR "cmd /c cd /d C:\SEASIC\seasic-processos && set PYTHONPATH=src && python -m seasic_monitor.cli rotina >> logs\agendador.txt 2>&1"
+cd /d C:\SEASIC\seasic-processos
+python -m pip install -e .[browser]
+mkdir logs
+```
+
+Exemplo de tarefa de segunda a sexta às 06:30 (ajuste o caminho):
+
+```bat
+schtasks /Create /TN "SEASIC Monitoramento" /SC WEEKLY /D MON,TUE,WED,THU,FRI /ST 06:30 /TR "cmd /c cd /d C:\SEASIC\seasic-processos && python -m seasic_monitor.cli rotina >> logs\agendador.txt 2>&1"
 ```
 
 Na tarefa, marque "Executar somente quando o usuário estiver conectado": o
