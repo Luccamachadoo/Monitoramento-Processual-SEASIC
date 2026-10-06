@@ -60,3 +60,6 @@ Thumbs.db
 /tools/seasic-processos/**/*.db
 /tools/seasic-processos/**/*.db-shm
 /tools/seasic-processos/**/*.db-wal
+
+# Capturas de tela dos sistemas oficiais podem conter dados pessoais; não versionar.
+/attached_assets/
