@@ -1,6 +1,6 @@
-# [Project name]
+# SEASIC — Monitoramento Processual
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+Base local de desenvolvimento para registrar consultas, preservar histórico e destacar mudanças e exceções em processos SEI/e-DOC.
 
 ## Run & Operate
 
@@ -22,15 +22,22 @@ _Replace the heading above with the project's name, and this line with one sente
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `tools/seasic-processos/` — CLI Python, SQLite, comparação, relatórios, documentação e testes.
+- `tools/seasic-processos/src/seasic_monitor/database.py` — fonte do esquema SQLite e persistência.
+- `tools/seasic-processos/docs/operacao.md` — limites e procedimentos operacionais.
+- `lib/api-spec/openapi.yaml` e `artifacts/api-server/` — scaffold compartilhado do workspace; não são a fonte dos dados do monitor.
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- O monitor começa como ferramenta Python local e usa SQLite; não depende do scaffold web/Postgres do workspace.
+- A demonstração contém somente registros sintéticos; coletores reais SEI/e-DOC permanecem bloqueados até autorização e configuração no ambiente institucional.
+- Execuções, fotografias e ocorrências ficam separadas do cadastro mestre; falhas não substituem o último estado válido.
+- O banco local, credenciais futuras, perfis de navegador e dados reais nunca devem ser adicionados ao Git ou a esta hospedagem sem autorização institucional.
+- O formato da planilha de destino (`.xlsx` ou nuvem) continua pendente; não manter os dois formatos em paralelo.
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+O MVP de linha de comando cadastra processos, grava fotografias e falhas, compara unidades e andamento, gera resumo por execução e mantém histórico por processo. A integração real e a atualização de planilhas ainda não estão habilitadas.
 
 ## User preferences
 

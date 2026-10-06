@@ -1,0 +1,41 @@
+[database]
+path = "data/processos.sqlite"
+
+[monitor]
+# Dias corridos. Ajustar para dias úteis somente após decisão do Gabinete.
+stagnant_after_days = 30
+
+# Será usado pelos coletores reais somente após autorização institucional.
+min_interval_seconds = 5
+max_processes_per_run = 500
+
+[collectors.SEI]
+enabled = false
+entry_url = ""
+profile_path = "browser_profiles/sei"
+
+[collectors.SEI.selectors]
+process_input = ""
+search_button = ""
+result_ready = ""
+units_open = ""
+last_movement = ""
+movement_date = ""
+no_result = ""
+session_expired = ""
+
+[collectors.EDOC]
+enabled = false
+entry_url = ""
+profile_path = "browser_profiles/edoc"
+
+[collectors.EDOC.selectors]
+process_input = ""
+search_button = ""
+result_ready = ""
+units_open = ""
+last_movement = ""
+movement_date = ""
+no_result = ""
+session_expired = ""
+
