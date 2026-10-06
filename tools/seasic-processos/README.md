@@ -34,23 +34,44 @@ PYTHONPATH=src python3 -m seasic_monitor.cli --database data/demo.sqlite report
 PYTHONPATH=src python3 -m seasic_monitor.cli status
 PYTHONPATH=src python3 -m seasic_monitor.cli report --format markdown
 PYTHONPATH=src python3 -m seasic_monitor.cli report --format json
+PYTHONPATH=src python3 -m seasic_monitor.cli visao                       # estado atual (Markdown)
+PYTHONPATH=src python3 -m seasic_monitor.cli visao --format csv --saida data/visao.csv
+PYTHONPATH=src python3 -m seasic_monitor.cli resumo                      # novidades ainda não comunicadas
+PYTHONPATH=src python3 -m seasic_monitor.cli resumo --marcar-comunicado
 PYTHONPATH=src python3 -m seasic_monitor.cli history SEI DEMO-001
 PYTHONPATH=src python3 -m seasic_monitor.cli import-catalog cadastro.csv
 PYTHONPATH=src python3 -m seasic_monitor.cli backup data/backup/processos.sqlite
 ```
 
-Após autorização e configuração local, o fluxo específico e-DOC é:
+- `visao` mostra, para cada processo ativo, unidades abertas, último trâmite, dias
+  sem movimento (calculados na exibição), situação da última consulta e a nota do
+  cadastro, com o carimbo da última execução bem-sucedida no topo. O CSV (UTF-8 com
+  BOM, abre direto no Excel) é a ponte para as planilhas até a decisão do formato.
+- `resumo` lista as ocorrências ainda não comunicadas, agrupadas por área e
+  programa. Com `--marcar-comunicado`, elas não voltam no próximo resumo.
+
+Após autorização e configuração local, a coleta real é:
 
 ```bash
-PYTHONPATH=src python3 -m seasic_monitor.cli login-edoc
-PYTHONPATH=src python3 -m seasic_monitor.cli run-edoc
+PYTHONPATH=src python3 -m seasic_monitor.cli login --sistema e-DOC
+PYTHONPATH=src python3 -m seasic_monitor.cli consultar e-DOC 2439/2026   # um processo, não grava
+PYTHONPATH=src python3 -m seasic_monitor.cli run --sistema e-DOC
 ```
 
-`login-edoc` abre um perfil persistente do navegador para o operador autenticar-se
-manualmente; com URL e `enabled = true`, pode ser usado antes de mapear os
-seletores. `run-edoc` percorre apenas processos e-DOC ativos, em série, usando o
-intervalo e o teto definidos no TOML, e recusa a coleta enquanto faltarem
-seletores. A configuração de exemplo mantém o coletor desativado.
+`login-edoc` e `run-edoc` continuam funcionando como atalhos. `login` abre um perfil
+persistente do navegador para o operador autenticar-se manualmente; com URL e
+`enabled = true`, pode ser usado antes de mapear os seletores. `consultar` serve para
+validar seletores num processo conhecido sem tocar no banco. `run` percorre apenas
+os processos ativos do sistema indicado, em série, e:
+
+- recusa começar se exceder o teto por execução, o teto diário
+  (`max_processes_per_day`, somando as execuções do dia) ou a janela `allowed_hours`;
+- consulta primeiro o processo de referência (`canary`), se configurado, e para a
+  rodada se ele falhar — sinal de layout alterado;
+- para a rodada quando a sessão expira ou após `max_consecutive_failures` falhas
+  técnicas seguidas; os restantes aparecem como "não consultados";
+- quando a sessão já está expirada no início, não grava fotografia por processo: a
+  execução fica `FALHOU` com a causa, e o último estado válido é preservado.
 
 Na estação institucional autorizada, instale o extra opcional do navegador após
 aprovação da equipe de TI:
@@ -62,9 +83,14 @@ python3 -m playwright install chromium
 
 O fluxo do e-DOC tem busca e detalhe em telas separadas. Se forem configurados
 `detail_link`, `result_row`, `process_number_cell` e `detail_ready`, o coletor
-exige os quatro, compara o número da célula exata e abre o detalhe apenas quando
-há uma única correspondência. Os seletores e a URL ficam apenas no `config.toml`
-local, nunca em `config.example.toml`.
+exige os quatro e abre o detalhe apenas quando há uma única linha correspondente.
+O e-DOC exibe números com sufixo (`2439/2026-COMPR-SEASIC`): o cadastro pode trazer
+o número completo ou só `NNNN/AAAA`; nesse caso, mais de uma linha com o mesmo
+prefixo é tratada como resultado ambíguo. O número exibido é gravado na fotografia.
+
+No SEI, a árvore e o conteúdo do processo ficam em iframes: use
+`[collectors.SEI.frames]` para indicar o iframe de cada seletor. Os seletores e a URL
+ficam apenas no `config.toml` local, nunca em `config.example.toml`.
 
 `--database` e `--config` são opções globais e devem vir antes do comando.
 Exemplo:
@@ -100,20 +126,22 @@ um número igual em SEI e e-DOC representa dois processos distintos.
 - Supressão de ocorrências repetidas durante a mesma situação.
 - Resumo por execução, histórico por processo, carimbo e backup SQLite.
 - Permissões restritas para diretório e arquivo do banco em sistemas POSIX.
-- Adaptador Playwright genérico por seletores, com perfil persistente e
-  comportamento de falha explícita; desativado por padrão.
+- Adaptador Playwright genérico por seletores (SEI e e-DOC), com perfil
+  persistente, suporte a iframes e falha explícita; desativado por padrão.
+- Rodada protegida: teto por execução e diário, janela de horário, processo de
+  referência e interrupção por sessão expirada ou falhas técnicas seguidas.
+- Visão atual (Markdown/CSV) e resumo executivo com controle do que já foi
+  comunicado.
 
 O limite de processo parado é configurável em dias corridos. A decisão entre dias
 corridos e dias úteis ainda precisa ser confirmada pelo Gabinete.
 
 ## O que não está habilitado
 
-O comando genérico `run` continua bloqueado. O adaptador Playwright e os
-comandos `login-edoc`/`run-edoc` são uma base genérica específica para e-DOC:
-seletores, fluxo de navegação e comportamento do sistema precisam ser
-configurados e validados com conta autorizada no ambiente institucional. O extra
-Playwright não está instalado neste ambiente. Não foram incluídos URLs,
-credenciais, perfis de navegador nem dados reais.
+Os coletores vêm desativados. Seletores, fluxo de navegação e comportamento de
+cada sistema precisam ser configurados e validados com conta autorizada no
+ambiente institucional. Não foram incluídos URLs, credenciais, perfis de navegador
+nem dados reais.
 
 Antes de habilitar uma coleta real, o operador institucional precisa confirmar:
 
@@ -135,6 +163,10 @@ são Markdown/JSON e o SQLite é a fonte do histórico.
 PYTHONPATH=src python3 -m unittest discover -s tests -v
 ```
 
-As decisões operacionais e a configuração de execução estão em
+`tests/test_playwright_local.py` roda o coletor com Chromium contra páginas
+sintéticas em `tests/fixtures/paginas/` (nunca contra SEI/e-DOC); é pulado quando o
+extra `browser` não está instalado.
+
+A arquitetura atual está em [`docs/arquitetura.md`](docs/arquitetura.md). As decisões operacionais e a configuração de execução estão em
 [`docs/operacao.md`](docs/operacao.md).
 

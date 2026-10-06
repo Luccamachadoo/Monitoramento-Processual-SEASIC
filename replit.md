@@ -31,14 +31,15 @@ Base local de desenvolvimento para registrar consultas, preservar histórico e d
 
 - O monitor começa como ferramenta Python local e usa SQLite; não depende do scaffold web/Postgres do workspace.
 - A demonstração contém somente registros sintéticos; coletores reais SEI/e-DOC permanecem bloqueados até autorização e configuração no ambiente institucional.
-- e-DOC é o primeiro sistema escolhido para integrar; a configuração real segue desativada até haver URL e seletores aprovados.
+- e-DOC é o primeiro sistema escolhido para integrar; a configuração real segue desativada até haver URL e seletores aprovados. O mesmo coletor atende o SEI (com iframes via `frames`).
+- A rodada é protegida por teto diário, janela de horário, processo de referência e interrupção por sessão expirada/falhas seguidas.
 - Execuções, fotografias e ocorrências ficam separadas do cadastro mestre; falhas não substituem o último estado válido.
 - O banco local, credenciais futuras, perfis de navegador e dados reais nunca devem ser adicionados ao Git ou a esta hospedagem sem autorização institucional.
 - O formato da planilha de destino (`.xlsx` ou nuvem) continua pendente; não manter os dois formatos em paralelo.
 
 ## Product
 
-O MVP de linha de comando cadastra processos, grava fotografias e falhas, compara unidades e andamento, gera resumo por execução e mantém histórico por processo. A integração real e a atualização de planilhas ainda não estão habilitadas.
+O MVP de linha de comando cadastra processos, grava fotografias e falhas, compara unidades e andamento, gera relatório por execução, visão atual (Markdown/CSV), resumo executivo do que ainda não foi comunicado e histórico por processo. A integração real e a atualização de planilhas ainda não estão habilitadas.
 
 ## User preferences
 
@@ -46,7 +47,8 @@ _Populate as you build — explicit user instructions worth remembering across s
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+- Não versionar capturas de tela do SEI/e-DOC: mostram dados pessoais (`attached_assets/` é ignorado).
+- `tests/test_playwright_local.py` só roda com o extra `browser`; a versão do Playwright precisa casar com o Chromium instalado.
 
 ## Pointers
 
