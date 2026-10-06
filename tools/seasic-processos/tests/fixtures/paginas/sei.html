@@ -1,2 +1,15 @@
-<html><body><input id="txtPesquisa"><button id="btn" onclick="document.getElementById('area').innerHTML='<iframe id=ifrVisualizacao src=sei_inner.html></iframe><div id=ok>pronto</div>'">ir</button>
-<div id="area"></div></body></html>
+<html><body>
+<input id="txtPesquisa"><button id="btn" onclick="pesquisar()">ir</button>
+<div id="vazio" style="display:none">Processo não encontrado</div>
+<div id="area"></div>
+<script>
+function pesquisar(){
+  if(document.getElementById('txtPesquisa').value.startsWith('9999')){
+    document.getElementById('vazio').style.display='block';return;}
+  // Como no SEI real, o resultado novo chega depois; o antigo continua na tela até lá.
+  const n=document.getElementById('txtPesquisa').value;
+  const pagina=n.startsWith('5555')?'sei_inner_5555.html':'sei_inner.html';
+  setTimeout(function(){document.getElementById('area').innerHTML=
+    '<iframe id=ifrVisualizacao src='+pagina+'></iframe><div id=ok>pronto</div>';},800);
+}
+</script></body></html>

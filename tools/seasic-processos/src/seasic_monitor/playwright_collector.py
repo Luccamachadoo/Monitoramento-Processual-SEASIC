@@ -231,16 +231,25 @@ class PlaywrightCollector:
                     "SESSAO_EXPIRADA",
                     "Sessão expirada; é necessário login humano autorizado.",
                 )
-            if not await self._is_visible("process_input"):
-                await self._page.goto(
-                    self.config.entry_url,
-                    wait_until="domcontentloaded",
-                    timeout=30_000,
+            # Recarrega a busca a cada processo: um resultado da consulta anterior
+            # ainda visível faria result_ready passar e os dados de outro processo
+            # seriam gravados neste.
+            await self._page.goto(
+                self.config.entry_url,
+                wait_until="domcontentloaded",
+                timeout=30_000,
+            )
+            if await self._is_visible("session_expired"):
+                return self._failed(
+                    process,
+                    CollectionStatus.SESSION_EXPIRED,
+                    "SESSAO_EXPIRADA",
+                    "Sessão expirada; é necessário login humano autorizado.",
                 )
-                await self._locator("process_input").first.wait_for(
-                    state="visible",
-                    timeout=30_000,
-                )
+            await self._locator("process_input").first.wait_for(
+                state="visible",
+                timeout=30_000,
+            )
             await self._locator("process_input").fill(process.number)
             await self._locator("search_button").click()
             try:

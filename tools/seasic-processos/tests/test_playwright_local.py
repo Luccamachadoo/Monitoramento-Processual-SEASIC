@@ -47,7 +47,8 @@ SEI = {
     "selectors": {
         "process_input": "#txtPesquisa",
         "search_button": "#btn",
-        "result_ready": "#ok",
+        "result_ready": "#ok, #vazio:visible",
+        "no_result": "#vazio",
         "units_open": "#unidades a.u",
         "last_movement": "tr.andamento td.desc",
         "movement_date": "tr.andamento td.data",
@@ -101,6 +102,18 @@ class LocalPagesTests(unittest.TestCase):
         self.assertEqual(observation.last_movement, "Processo recebido na unidade")
         self.assertEqual(observation.movement_date, "2026-09-01")
 
+    def test_previous_result_is_not_reused_for_next_process(self) -> None:
+        first, second, missing = asyncio.run(
+            _collect(
+                "SEI", SEI, ["2439/2026", "5555/2026", "9999/2026"], self.temp_dir.name
+            )
+        )
+        self.assertEqual(first.units, ("SEASIC-GAB",))
+        # Sem recarregar a busca, o resultado de 2439/2026 ainda estaria na tela
+        # e seria gravado como se fosse de 5555/2026.
+        self.assertEqual(second.units, ("DIPLAN",))
+        self.assertEqual(second.movement_date, "2026-10-02")
+        self.assertEqual(missing.status, CollectionStatus.NOT_FOUND)
 
 if __name__ == "__main__":
     unittest.main()
