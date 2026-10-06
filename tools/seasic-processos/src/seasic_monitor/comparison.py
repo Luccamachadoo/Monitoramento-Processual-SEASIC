@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
 import hashlib
 
-from .domain import Observation, normalized_text, normalized_units, parse_movement_date
+from .domain import (
+    Observation,
+    local_date,
+    normalized_text,
+    normalized_units,
+    parse_movement_date,
+)
 
 
 @dataclass(frozen=True)
@@ -70,7 +75,7 @@ def compare_observation(
             )
 
     days_without_movement = (
-        parse_movement_date(current.collected_at).toordinal()
+        local_date(current.collected_at).toordinal()
         - parse_movement_date(current.movement_date).toordinal()
     )
     if stagnant_after_days > 0 and days_without_movement >= stagnant_after_days:

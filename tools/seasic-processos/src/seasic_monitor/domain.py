@@ -6,6 +6,7 @@ from enum import StrEnum
 import hashlib
 import json
 import re
+from zoneinfo import ZoneInfo
 
 
 class CollectionStatus(StrEnum):
@@ -36,6 +37,9 @@ def display_system(value: str) -> str:
     return "e-DOC" if canonical_system(value) == "EDOC" else "SEI"
 
 
+BRAZIL_TZ = ZoneInfo("America/Sao_Paulo")
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -46,6 +50,14 @@ def parse_movement_date(value: str) -> date:
         return date.fromisoformat(cleaned[:10])
     except ValueError as exc:
         raise ValueError("A data do último trâmite precisa estar no formato ISO.") from exc
+
+
+def local_date(value: str) -> date:
+    """Data civil no fuso de Brasília para um instante ISO (com ou sem fuso)."""
+    parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(BRAZIL_TZ).date()
 
 
 def normalized_text(value: str | None) -> str:

@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .collectors import DemoCollector
+from .collectors import DemoCollector, LiveCollectionDisabled
 from .database import MonitorDatabase
 from .domain import CollectionStatus, Observation, canonical_system, utc_now
 from .playwright_collector import PlaywrightCollector, PlaywrightCollectorConfig

@@ -7,13 +7,18 @@ import asyncio
 
 from seasic_monitor.collectors import LiveCollectionDisabled
 from seasic_monitor.database import MonitorDatabase
-from seasic_monitor.domain import CollectionStatus, Observation, ProcessRecord
+from seasic_monitor.domain import (
+    CollectionStatus,
+    Observation,
+    ProcessRecord,
+    local_date,
+)
 from seasic_monitor.playwright_collector import (
     PlaywrightCollector,
     PlaywrightCollectorConfig,
     _normalize_movement_date,
 )
-from seasic_monitor.monitor import run_edoc
+from seasic_monitor.monitor import prepare_edoc_session, run_edoc
 from seasic_monitor.reporting import render_markdown
 
 
@@ -234,6 +239,33 @@ class MonitorDatabaseTests(unittest.TestCase):
             _normalize_movement_date("Enviado em 06/10/2026 às 13:35"),
             "2026-10-06",
         )
+
+    def test_login_failure_is_reported_without_name_error(self) -> None:
+        settings = {"enabled": True, "entry_url": "https://example.invalid/"}
+        # Sem Playwright instalado, start() falha; a falha deve virar
+        # LiveCollectionDisabled (mensagem ao operador), nunca NameError.
+        with self.assertRaises(LiveCollectionDisabled):
+            asyncio.run(prepare_edoc_session(settings, self.temp_dir.name))
+
+    def test_interrupted_execution_is_closed_on_next_run(self) -> None:
+        orphan = self.database.create_execution(mode="TESTE")
+        self.database.record_observation(orphan, observation(), stagnant_after_days=30)
+        self.database.create_execution(mode="TESTE")
+        report = self.database.run_report(orphan)
+        self.assertEqual(report["execution"]["status"], "FALHOU")
+        self.assertEqual(report["execution"]["succeeded"], 1)
+        self.assertIn("interrompida", report["execution"]["notes"])
+
+    def test_days_without_movement_use_brasilia_date(self) -> None:
+        # 01:30 UTC de 07/10 ainda é 06/10 em Brasília.
+        self.assertEqual(local_date("2026-10-07T01:30:00+00:00").isoformat(), "2026-10-06")
+        result = self.add_snapshot(
+            observation(
+                collected_at="2026-10-07T01:30:00+00:00",
+                movement_date="2026-09-07",
+            )
+        )
+        self.assertEqual(result["occurrences_added"], 0)  # 29 dias, abaixo de 30
 
 
 if __name__ == "__main__":

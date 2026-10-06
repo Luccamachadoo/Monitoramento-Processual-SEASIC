@@ -187,6 +187,28 @@ class MonitorDatabase:
 
     def create_execution(self, mode: str, started_at: str | None = None) -> int:
         with self._connection() as connection:
+            # A rotina é serial: qualquer execução ainda aberta foi interrompida
+            # (queda, Ctrl+C) e não pode continuar parecendo em andamento.
+            connection.execute(
+                """
+                UPDATE executions
+                SET finished_at = ?, status = 'FALHOU',
+                    succeeded = (
+                        SELECT COUNT(*) FROM snapshots
+                        WHERE run_id = executions.id AND valid = 1
+                    ),
+                    failed = (
+                        SELECT COUNT(*) FROM snapshots
+                        WHERE run_id = executions.id AND valid = 0
+                    ),
+                    total_processes = (
+                        SELECT COUNT(*) FROM snapshots WHERE run_id = executions.id
+                    ),
+                    notes = 'Execução interrompida antes de ser finalizada.'
+                WHERE status = 'EM_ANDAMENTO'
+                """,
+                (utc_now(),),
+            )
             cursor = connection.execute(
                 """
                 INSERT INTO executions (started_at, mode, status)

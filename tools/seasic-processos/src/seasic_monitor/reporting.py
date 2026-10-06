@@ -4,10 +4,7 @@ from datetime import datetime
 import json
 from zoneinfo import ZoneInfo
 
-from .domain import display_system
-
-
-BRAZIL_TZ = ZoneInfo("America/Sao_Paulo")
+from .domain import BRAZIL_TZ, display_system
 
 
 def _local_time(value: str | None) -> str:
