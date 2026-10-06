@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 import os
 from pathlib import Path
+import re
 from typing import Any
 
 from .collectors import LiveCollectionDisabled
@@ -68,20 +69,38 @@ class PlaywrightCollector:
         self._page: Any = None
         self._timeout_error: type[BaseException] | None = None
 
-    def validate_config(self) -> None:
+    def validate_config(self, *, require_collection_selectors: bool = True) -> None:
         if not self.config.enabled:
             raise LiveCollectionDisabled(
                 f"Coletor {self.config.system} desativado na configuração."
             )
-        missing = [key for key in REQUIRED_SELECTORS if not self.config.selectors.get(key)]
-        if not self.config.entry_url or missing:
-            details = ", ".join(missing) if missing else "entry_url"
+        missing = ["entry_url"] if not self.config.entry_url else []
+        if require_collection_selectors:
+            missing.extend(
+                key
+                for key in REQUIRED_SELECTORS
+                if not self.config.selectors.get(key)
+            )
+        if require_collection_selectors and self.config.selectors.get("detail_link"):
+            missing.extend(
+                key
+                for key in (
+                    "result_row",
+                    "process_number_cell",
+                    "detail_ready",
+                )
+                if not self.config.selectors.get(key)
+            )
+        if missing:
+            details = ", ".join(missing)
             raise LiveCollectionDisabled(
                 f"Configuração incompleta para {self.config.system}: {details}."
             )
 
-    async def start(self) -> None:
-        self.validate_config()
+    async def start(self, *, require_collection_selectors: bool = True) -> None:
+        self.validate_config(
+            require_collection_selectors=require_collection_selectors
+        )
         try:
             from playwright.async_api import TimeoutError as PlaywrightTimeoutError
             from playwright.async_api import async_playwright
@@ -144,11 +163,15 @@ class PlaywrightCollector:
         except self._timeout_error:
             return False
 
-    async def wait_for_manual_login(self) -> bool:
+    async def wait_for_manual_login(
+        self,
+        *,
+        require_search_ready: bool = True,
+    ) -> bool:
         """Wait for the operator to authenticate in the visible browser window."""
         if self._page is None:
             raise RuntimeError("Inicie o navegador antes do login manual.")
-        if await self.is_ready():
+        if require_search_ready and await self.is_ready():
             return False
         import asyncio
         import sys
@@ -168,7 +191,7 @@ class PlaywrightCollector:
             wait_until="domcontentloaded",
             timeout=30_000,
         )
-        if not await self.is_ready():
+        if require_search_ready and not await self.is_ready():
             raise LiveCollectionDisabled(
                 "A tela de consulta não ficou disponível após o login. "
                 "Verifique a sessão e os seletores autorizados."
@@ -189,6 +212,16 @@ class PlaywrightCollector:
                     CollectionStatus.SESSION_EXPIRED,
                     "SESSAO_EXPIRADA",
                     "Sessão expirada; é necessário login humano autorizado.",
+                )
+            if not await self._is_visible(selectors["process_input"]):
+                await self._page.goto(
+                    self.config.entry_url,
+                    wait_until="domcontentloaded",
+                    timeout=30_000,
+                )
+                await self._page.locator(selectors["process_input"]).wait_for(
+                    state="visible",
+                    timeout=30_000,
                 )
             await self._page.locator(selectors["process_input"]).fill(process.number)
             await self._page.locator(selectors["search_button"]).click()
@@ -218,6 +251,73 @@ class PlaywrightCollector:
                     "RESULTADO_AUSENTE",
                     "O seletor do resultado não apareceu dentro do prazo.",
                 )
+
+            if await self._is_visible(selectors.get("no_result", "")):
+                return self._failed(
+                    process,
+                    CollectionStatus.NOT_FOUND,
+                    "NAO_LOCALIZADO",
+                    "O sistema não localizou o processo consultado.",
+                )
+
+            if selectors.get("detail_link"):
+                candidates = self._page.locator(selectors["result_row"]).filter(
+                    has_text=process.number
+                )
+                candidate_count = await candidates.count()
+                if candidate_count == 0:
+                    return self._failed(
+                        process,
+                        CollectionStatus.EXTRACTION_ERROR,
+                        "LINHA_RESULTADO_AUSENTE",
+                        "A busca retornou conteúdo, mas não a linha do processo esperado.",
+                    )
+                rows = []
+                expected_number = " ".join(process.number.split()).casefold()
+                for index in range(candidate_count):
+                    candidate = candidates.nth(index)
+                    number_cell = candidate.locator(
+                        selectors["process_number_cell"]
+                    )
+                    actual_number = " ".join(
+                        (await number_cell.inner_text()).split()
+                    ).casefold()
+                    if actual_number == expected_number:
+                        rows.append(candidate)
+                if not rows:
+                    return self._failed(
+                        process,
+                        CollectionStatus.EXTRACTION_ERROR,
+                        "NUMERO_RESULTADO_DIVERGENTE",
+                        "A busca não retornou uma linha com número exatamente igual ao consultado.",
+                    )
+                if len(rows) != 1:
+                    return self._failed(
+                        process,
+                        CollectionStatus.EXTRACTION_ERROR,
+                        "RESULTADO_AMBIGUO",
+                        "A busca retornou mais de uma linha correspondente ao processo.",
+                    )
+                await rows[0].locator(selectors["detail_link"]).click()
+                try:
+                    await self._page.locator(selectors["detail_ready"]).wait_for(
+                        state="visible",
+                        timeout=30_000,
+                    )
+                except self._timeout_error:
+                    if await self._is_visible(selectors.get("session_expired", "")):
+                        return self._failed(
+                            process,
+                            CollectionStatus.SESSION_EXPIRED,
+                            "SESSAO_EXPIRADA",
+                            "Sessão expirada; é necessário login humano autorizado.",
+                        )
+                    return self._failed(
+                        process,
+                        CollectionStatus.EXTRACTION_ERROR,
+                        "DETALHE_AUSENTE",
+                        "A tela de detalhes não apareceu dentro do prazo.",
+                    )
 
             units = tuple(
                 unit.strip()
@@ -301,5 +401,11 @@ def _normalize_movement_date(value: str) -> str:
                 return datetime.strptime(cleaned, date_format).date().isoformat()
             except ValueError:
                 continue
+    date_match = re.search(r"(?<!\d)(\d{1,2}/\d{1,2}/\d{4})(?!\d)", cleaned)
+    if date_match:
+        try:
+            return datetime.strptime(date_match.group(1), "%d/%m/%Y").date().isoformat()
+        except ValueError:
+            pass
     return cleaned
 

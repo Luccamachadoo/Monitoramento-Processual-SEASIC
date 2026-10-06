@@ -1,8 +1,9 @@
 # Monitoramento Processual SEASIC
 
 Ferramenta de linha de comando para cadastro, histórico e comparação de consultas
-processuais. A primeira entrega opera somente com dados sintéticos: não acessa
-SEI/e-DOC, não abre navegador e não movimenta processos.
+processuais. Por padrão usa apenas dados sintéticos e não acessa SEI/e-DOC. O
+fluxo opcional e-DOC permanece desligado e só deve ser configurado e executado
+em ambiente institucional autorizado. Nunca movimenta processos.
 
 ## Começar
 
@@ -46,9 +47,24 @@ PYTHONPATH=src python3 -m seasic_monitor.cli run-edoc
 ```
 
 `login-edoc` abre um perfil persistente do navegador para o operador autenticar-se
-manualmente. `run-edoc` percorre apenas processos e-DOC ativos, em série, usando
-o intervalo e o teto definidos no TOML. Ambos recusam a execução com a
-configuração de exemplo, que mantém o coletor desativado e sem URL/seletores.
+manualmente; com URL e `enabled = true`, pode ser usado antes de mapear os
+seletores. `run-edoc` percorre apenas processos e-DOC ativos, em série, usando o
+intervalo e o teto definidos no TOML, e recusa a coleta enquanto faltarem
+seletores. A configuração de exemplo mantém o coletor desativado.
+
+Na estação institucional autorizada, instale o extra opcional do navegador após
+aprovação da equipe de TI:
+
+```bash
+python3 -m pip install -e '.[browser]'
+python3 -m playwright install chromium
+```
+
+O fluxo do e-DOC tem busca e detalhe em telas separadas. Se forem configurados
+`detail_link`, `result_row`, `process_number_cell` e `detail_ready`, o coletor
+exige os quatro, compara o número da célula exata e abre o detalhe apenas quando
+há uma única correspondência. Os seletores e a URL ficam apenas no `config.toml`
+local, nunca em `config.example.toml`.
 
 `--database` e `--config` são opções globais e devem vir antes do comando.
 Exemplo:

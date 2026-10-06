@@ -160,6 +160,57 @@ class MonitorDatabaseTests(unittest.TestCase):
         with self.assertRaises(LiveCollectionDisabled):
             asyncio.run(collector.start())
 
+    def test_detail_navigation_requires_a_scoped_result_and_ready_marker(self) -> None:
+        selectors = {
+            "process_input": "#process",
+            "search_button": "#search",
+            "result_ready": "#results",
+            "result_row": "table tbody tr",
+            "detail_link": "a.details",
+            "units_open": ".units",
+            "last_movement": ".movement",
+            "movement_date": ".movement-date",
+        }
+        config = PlaywrightCollectorConfig.from_mapping(
+            "EDOC",
+            {
+                "enabled": True,
+                "entry_url": "https://example.invalid/search",
+                "selectors": selectors,
+            },
+            self.temp_dir.name,
+        )
+        with self.assertRaises(LiveCollectionDisabled):
+            PlaywrightCollector(config).validate_config()
+
+        selectors["process_number_cell"] = "td:first-child"
+        selectors["detail_ready"] = ".process-details"
+        config = PlaywrightCollectorConfig.from_mapping(
+            "EDOC",
+            {
+                "enabled": True,
+                "entry_url": "https://example.invalid/search",
+                "selectors": selectors,
+            },
+            self.temp_dir.name,
+        )
+        PlaywrightCollector(config).validate_config()
+
+    def test_manual_login_can_open_before_collection_selectors_are_mapped(self) -> None:
+        config = PlaywrightCollectorConfig.from_mapping(
+            "EDOC",
+            {
+                "enabled": True,
+                "entry_url": "https://example.invalid/search",
+                "selectors": {},
+            },
+            self.temp_dir.name,
+        )
+        collector = PlaywrightCollector(config)
+        collector.validate_config(require_collection_selectors=False)
+        with self.assertRaises(LiveCollectionDisabled):
+            collector.validate_config()
+
     def test_edoc_runner_refuses_to_start_before_approval(self) -> None:
         self.database.upsert_process(
             ProcessRecord(system="e-DOC", number="200/2026", area="TESTE")
@@ -179,6 +230,10 @@ class MonitorDatabaseTests(unittest.TestCase):
 
     def test_local_date_is_normalized_to_iso(self) -> None:
         self.assertEqual(_normalize_movement_date("06/10/2026"), "2026-10-06")
+        self.assertEqual(
+            _normalize_movement_date("Enviado em 06/10/2026 às 13:35"),
+            "2026-10-06",
+        )
 
 
 if __name__ == "__main__":

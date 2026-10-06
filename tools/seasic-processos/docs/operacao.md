@@ -74,15 +74,23 @@ exemplo está desativada e não tem endereço nem seletores. Antes de habilitá-
 3. mapeie e valide os seletores para busca, resultado, unidades, andamento, data,
    processo não localizado e sessão expirada;
 4. configure URL e seletores no `config.toml` local (nunca no arquivo de exemplo
-   versionado);
-5. autentique-se pela janela oficial com `login-edoc`; a ferramenta não lê nem
-   preenche usuário, senha, MFA ou CAPTCHA;
+   versionado). Como a consulta e os detalhes são telas separadas, preencha
+   `result_row`, `process_number_cell`, `detail_link` e `detail_ready` para abrir
+   apenas o detalhe da linha cujo número corresponde exatamente ao processo
+   consultado. A URL inicial deve abrir a tela de busca após a autenticação;
+5. se necessário, use `login-edoc` para abrir o perfil local e autenticar-se na
+   janela oficial. Esse comando precisa apenas de URL e `enabled = true`; ele
+   não lê nem preenche usuário, senha, MFA ou CAPTCHA;
 6. valide um processo conhecido antes de qualquer lote.
 
 `run-edoc` consulta apenas processos e-DOC ativos, um por vez, aplicando o
 intervalo e o teto de processos do TOML. Se a sessão não estiver pronta ou o
 layout não corresponder aos seletores, registra a falha sem substituir a última
 fotografia válida.
+
+Para instalar o navegador no computador institucional, a equipe responsável
+precisa aprovar e executar a instalação do extra Playwright e do Chromium. Não
+copie o perfil persistente para o Replit nem para pastas sincronizadas.
 
 Antes de lote, validar manualmente de 8 a 12 processos durante cinco dias úteis,
 conforme o critério do projeto. O lote não deve atualizar planilhas até essa

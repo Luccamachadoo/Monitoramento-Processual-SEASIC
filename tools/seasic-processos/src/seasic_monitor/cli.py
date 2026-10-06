@@ -174,9 +174,15 @@ def _run(args: argparse.Namespace) -> int:
             )
         )
         if logged_in:
-            print("Login manual concluído; sessão local pronta para consulta.")
+            print(
+                "Login manual concluído; perfil local salvo. "
+                "run-edoc ainda valida seletores e autorização antes de consultar."
+            )
         else:
-            print("A sessão já estava autenticada; nenhuma credencial foi solicitada.")
+            print(
+                "A tela de consulta já estava pronta; nenhuma nova autenticação "
+                "foi solicitada."
+            )
         return 0
     if args.command == "run-edoc":
         run_id = asyncio.run(

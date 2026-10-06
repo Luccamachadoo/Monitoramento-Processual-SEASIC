@@ -14,13 +14,17 @@ from .playwright_collector import PlaywrightCollector, PlaywrightCollectorConfig
 def _edoc_collector(
     collector_settings: dict[str, Any],
     config_dir: str | Path,
+    *,
+    require_collection_selectors: bool = True,
 ) -> PlaywrightCollector:
     collector = PlaywrightCollector(
         PlaywrightCollectorConfig.from_mapping(
             "EDOC", collector_settings, config_dir
         )
     )
-    collector.validate_config()
+    collector.validate_config(
+        require_collection_selectors=require_collection_selectors
+    )
     return collector
 
 
@@ -28,11 +32,19 @@ async def prepare_edoc_session(
     collector_settings: dict[str, Any],
     config_dir: str | Path,
 ) -> bool:
-    collector = _edoc_collector(collector_settings, config_dir)
+    collector = _edoc_collector(
+        collector_settings,
+        config_dir,
+        require_collection_selectors=False,
+    )
     try:
         try:
-            await collector.start()
-            return await collector.wait_for_manual_login()
+            await collector.start(require_collection_selectors=False)
+            return await collector.wait_for_manual_login(
+                require_search_ready=bool(
+                    collector.config.selectors.get("process_input")
+                )
+            )
         except LiveCollectionDisabled:
             raise
         except Exception as exc:
