@@ -13,7 +13,13 @@ from .collectors import LiveCollectionDisabled
 from .database import MonitorDatabase
 from .domain import ProcessRecord, canonical_system
 from .monitor import RunPolicy, consult_one, prepare_session, run_collection, run_demo
-from .reporting import render_json, render_markdown, render_status
+from .reporting import (
+    render_current_view,
+    render_executive_summary,
+    render_json,
+    render_markdown,
+    render_status,
+)
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[2]
@@ -40,6 +46,19 @@ def _parser() -> argparse.ArgumentParser:
     report.add_argument("--run-id", type=int, help="ID da execução; padrão: a mais recente.")
     report.add_argument(
         "--format", choices=("markdown", "json"), default="markdown"
+    )
+    view = commands.add_parser(
+        "visao", help="Mostra o estado atual de cada processo ativo (visão executiva)."
+    )
+    view.add_argument("--format", choices=("markdown", "csv"), default="markdown")
+    view.add_argument("--saida", type=Path, help="Grava em arquivo em vez de imprimir.")
+    summary = commands.add_parser(
+        "resumo", help="Resumo executivo das ocorrências ainda não comunicadas."
+    )
+    summary.add_argument(
+        "--marcar-comunicado",
+        action="store_true",
+        help="Depois de emitir, marca as ocorrências como comunicadas.",
     )
     history = commands.add_parser("history", help="Mostra histórico de um processo cadastrado.")
     history.add_argument("system", help="SEI ou e-DOC")
@@ -167,6 +186,23 @@ def _run(args: argparse.Namespace) -> int:
             print(render_json(report_data or {}))
         else:
             print(render_markdown(report_data))
+        return 0
+    if args.command == "visao":
+        text = render_current_view(database.current_view(), args.format)
+        if args.saida:
+            args.saida.parent.mkdir(parents=True, exist_ok=True)
+            # utf-8-sig para o Excel reconhecer acentos ao abrir o CSV.
+            args.saida.write_text(text, encoding="utf-8-sig" if args.format == "csv" else "utf-8")
+            print(f"Visão atual gravada em: {args.saida}")
+        else:
+            print(text, end="")
+        return 0
+    if args.command == "resumo":
+        pending = database.pending_occurrences()
+        print(render_executive_summary(pending), end="")
+        if args.marcar_comunicado:
+            marked = database.mark_communicated([item["id"] for item in pending["occurrences"]])
+            print(f"\n{marked} ocorrência(s) marcada(s) como comunicada(s).", file=sys.stderr)
         return 0
     if args.command == "history":
         print(render_json(database.process_history(args.system, args.number)))

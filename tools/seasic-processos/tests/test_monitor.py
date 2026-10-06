@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 import sqlite3
 import tempfile
@@ -21,7 +22,11 @@ from seasic_monitor.playwright_collector import (
     _normalize_movement_date,
 )
 from seasic_monitor.monitor import RunPolicy, prepare_session, run_collection
-from seasic_monitor.reporting import render_markdown
+from seasic_monitor.reporting import (
+    render_current_view,
+    render_executive_summary,
+    render_markdown,
+)
 
 
 def observation(
@@ -302,6 +307,54 @@ class MonitorDatabaseTests(unittest.TestCase):
         history = self.database.process_history("SEI", "100/2026")
         self.assertEqual(history["snapshots"][0]["id"], result["snapshot_id"])
         self.assertEqual(history["snapshots"][0]["display_number"], "100/2026-COMPR-SEASIC")
+
+    def test_current_view_shows_last_valid_state_and_current_failure(self) -> None:
+        self.database.upsert_process(
+            ProcessRecord(system="SEI", number="100/2026", area="DSAN", description="Câmaras frias")
+        )
+        self.add_snapshot(observation(units=("GSP", "DIPLAN"), movement_date="2026-09-06"))
+        self.add_snapshot(
+            observation(
+                collected_at="2026-10-06T10:00:00+00:00",
+                status=CollectionStatus.UNAVAILABLE,
+                error="fora do ar",
+            )
+        )
+        view = self.database.current_view()
+        markdown = render_current_view(view, today=date(2026, 10, 6))
+        self.assertIn("DIPLAN; GSP", markdown)
+        self.assertIn("06/09/2026", markdown)
+        self.assertIn("| 30 |", markdown)
+        self.assertIn("Falha atual: INDISPONIVEL", markdown)
+        self.assertIn("Câmaras frias", markdown)
+        csv_text = render_current_view(view, "csv", today=date(2026, 10, 6))
+        self.assertTrue(csv_text.startswith("Sistema,Processo,"))
+        self.assertIn("SEI,100/2026,DSAN", csv_text)
+
+    def test_current_view_without_execution_warns_instead_of_showing_no_movement(self) -> None:
+        markdown = render_current_view(self.database.current_view())
+        self.assertIn("nenhuma", markdown)
+        self.assertIn("Nunca consultado", markdown)
+
+    def test_executive_summary_lists_each_occurrence_once(self) -> None:
+        self.add_snapshot(observation(units=("GABINETE",)))
+        self.add_snapshot(
+            observation(
+                collected_at="2026-10-06T11:00:00+00:00",
+                units=("DIPLAN",),
+                movement="Encaminhado",
+                movement_date="2026-10-06",
+            )
+        )
+        pending = self.database.pending_occurrences()
+        summary = render_executive_summary(pending)
+        self.assertIn("**Mudou de unidade:** 1", summary)
+        self.assertIn("GABINETE → DIPLAN", summary)
+        self.assertIn("## TESTE", summary)
+        marked = self.database.mark_communicated([item["id"] for item in pending["occurrences"]])
+        self.assertEqual(marked, 2)
+        again = render_executive_summary(self.database.pending_occurrences())
+        self.assertIn("Nenhuma novidade desde o último resumo.", again)
 
 
 if __name__ == "__main__":

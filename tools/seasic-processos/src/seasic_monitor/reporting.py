@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from datetime import datetime
+import csv
+from datetime import date, datetime
+import io
 import json
 from zoneinfo import ZoneInfo
 
-from .domain import BRAZIL_TZ, display_system
+from .domain import BRAZIL_TZ, display_system, parse_movement_date
 
 
 def _local_time(value: str | None) -> str:
@@ -115,3 +117,170 @@ def render_status(report: dict | None) -> str:
 def render_json(data: dict) -> str:
     return json.dumps(data, ensure_ascii=False, indent=2, default=str)
 
+
+
+OCCURRENCE_LABELS = {
+    "MUDANCA_DE_UNIDADE": "Mudou de unidade",
+    "NOVO_ANDAMENTO": "Novo andamento",
+    "PARADO": "Parado",
+    "FALHA": "Falha de consulta",
+}
+OCCURRENCE_ORDER = list(OCCURRENCE_LABELS)
+
+CURRENT_VIEW_COLUMNS = (
+    "Sistema",
+    "Processo",
+    "Área",
+    "Programa",
+    "Unidade atual",
+    "Último trâmite",
+    "Dias sem movimento",
+    "Andamento",
+    "Situação da consulta",
+    "Consultado em",
+    "Nota",
+)
+
+
+def _stamp_lines(data: dict) -> list[str]:
+    last = data["last_execution"]
+    last_successful = data["last_successful_execution"]
+    lines = [
+        f"- **Última execução bem-sucedida:** "
+        + (
+            f"{_local_time(last_successful['finished_at'])} · "
+            f"{last_successful['succeeded']} processo(s) consultado(s) com êxito"
+            if last_successful
+            else "nenhuma — não há coleta válida; ausência de dado não é ausência de movimentação"
+        ),
+    ]
+    if last and (not last_successful or last["id"] != last_successful["id"]):
+        lines.append(
+            f"- **Atenção:** a execução mais recente ({_local_time(last['started_at'])}) "
+            f"terminou como {last['status']}"
+            + (f" — {last['notes']}" if last["notes"] else "")
+            + ". Os dados abaixo podem estar desatualizados."
+        )
+    elif last and last["status"] != "OK":
+        lines.append(
+            f"- **Execução parcial:** {last['failed']} falha(s)"
+            + (f" — {last['notes']}" if last["notes"] else "")
+            + "."
+        )
+    return lines
+
+
+def current_view_rows(data: dict, today: date | None = None) -> list[dict[str, str]]:
+    today = today or datetime.now(BRAZIL_TZ).date()
+    rows = []
+    for item in data["rows"]:
+        process = item["process"]
+        valid = item["valid"]
+        attempt = item["attempt"]
+        if attempt is None:
+            situation = "Nunca consultado"
+        elif attempt["valid"]:
+            situation = "OK"
+        else:
+            situation = f"Falha atual: {attempt['status']}"
+        days = ""
+        if valid:
+            days = str(
+                (today - parse_movement_date(valid["movement_date"])).days
+            )
+        rows.append(
+            {
+                "Sistema": display_system(process["system"]),
+                "Processo": (valid or {}).get("display_number") or process["number"],
+                "Área": process["area"],
+                "Programa": process["program"],
+                "Unidade atual": "; ".join(valid["units"]) if valid else "",
+                "Último trâmite": (
+                    parse_movement_date(valid["movement_date"]).strftime("%d/%m/%Y")
+                    if valid
+                    else ""
+                ),
+                "Dias sem movimento": days,
+                "Andamento": valid["last_movement"] if valid else "",
+                "Situação da consulta": situation,
+                "Consultado em": _local_time(valid["collected_at"]) if valid else "",
+                "Nota": process["description"],
+            }
+        )
+    return rows
+
+
+def _md_cell(value: str) -> str:
+    return " ".join(value.split()).replace("|", "\\|") or "—"
+
+
+def render_current_view(data: dict, fmt: str = "markdown", today: date | None = None) -> str:
+    rows = current_view_rows(data, today)
+    if fmt == "csv":
+        buffer = io.StringIO()
+        writer = csv.DictWriter(buffer, fieldnames=CURRENT_VIEW_COLUMNS, lineterminator="\n")
+        writer.writeheader()
+        writer.writerows(rows)
+        return buffer.getvalue()
+    lines = ["# Visão atual — SEASIC", "", *_stamp_lines(data), ""]
+    if not rows:
+        lines.append("Nenhum processo ativo no Cadastro Mestre.")
+        return "\n".join(lines) + "\n"
+    columns = (
+        "Processo",
+        "Unidade atual",
+        "Último trâmite",
+        "Dias sem movimento",
+        "Situação da consulta",
+        "Nota",
+    )
+    lines.append("| " + " | ".join(columns) + " |")
+    lines.append("|" + "---|" * len(columns))
+    for row in rows:
+        row = {**row, "Processo": f"{row['Sistema']} {row['Processo']}"}
+        lines.append("| " + " | ".join(_md_cell(row[column]) for column in columns) + " |")
+    return "\n".join(lines) + "\n"
+
+
+def render_executive_summary(data: dict) -> str:
+    lines = ["# Resumo executivo — Monitoramento processual SEASIC", "", *_stamp_lines(data), ""]
+    occurrences = data["occurrences"]
+    if not occurrences:
+        lines.append("Nenhuma novidade desde o último resumo.")
+        return "\n".join(lines) + "\n"
+
+    counts = {kind: 0 for kind in OCCURRENCE_ORDER}
+    for occurrence in occurrences:
+        counts[occurrence["type"]] = counts.get(occurrence["type"], 0) + 1
+    lines.append(
+        " · ".join(
+            f"**{OCCURRENCE_LABELS.get(kind, kind)}:** {count}"
+            for kind, count in counts.items()
+        )
+    )
+    lines.append("")
+
+    groups: dict[tuple[str, str], list[dict]] = {}
+    for occurrence in occurrences:
+        groups.setdefault((occurrence["area"], occurrence["program"]), []).append(occurrence)
+    for (area, program), items in groups.items():
+        title = " · ".join(part for part in (area, program) if part) or "Sem área definida"
+        lines.extend([f"## {title}", ""])
+        items.sort(
+            key=lambda item: (
+                OCCURRENCE_ORDER.index(item["type"])
+                if item["type"] in OCCURRENCE_ORDER
+                else len(OCCURRENCE_ORDER),
+                item["system"],
+                item["number"],
+            )
+        )
+        for item in items:
+            subject = f" ({item['process_description']})" if item["process_description"] else ""
+            lines.append(
+                f"- **{OCCURRENCE_LABELS.get(item['type'], item['type'])}** — "
+                f"{display_system(item['system'])} {item['number']}{subject}: "
+                f"{item['description']}"
+            )
+        lines.append("")
+    return "\n".join(lines)

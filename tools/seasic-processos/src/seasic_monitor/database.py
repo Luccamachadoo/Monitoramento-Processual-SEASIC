@@ -545,6 +545,92 @@ class MonitorDatabase:
             "current_valid": [self._snapshot_dict(row) for row in latest_valid],
         }
 
+    def _execution_stamp(self, connection: sqlite3.Connection) -> dict[str, Any]:
+        last = connection.execute(
+            "SELECT * FROM executions ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        last_successful = connection.execute(
+            """
+            SELECT * FROM executions
+            WHERE succeeded > 0 AND status IN ('OK', 'PARCIAL')
+            ORDER BY id DESC LIMIT 1
+            """
+        ).fetchone()
+        return {
+            "last_execution": dict(last) if last else None,
+            "last_successful_execution": (
+                dict(last_successful) if last_successful else None
+            ),
+        }
+
+    def current_view(self) -> dict[str, Any]:
+        """Estado atual de cada processo ativo: última fotografia válida e última tentativa."""
+        with self._connection() as connection:
+            processes = connection.execute(
+                "SELECT * FROM processes WHERE active = 1 ORDER BY area, program, system, number"
+            ).fetchall()
+            latest_valid = {
+                (row["system"], row["number"]): self._snapshot_dict(row)
+                for row in connection.execute(
+                    """
+                    SELECT s.* FROM snapshots s
+                    JOIN (
+                        SELECT system, number, MAX(id) AS latest_id
+                        FROM snapshots WHERE valid = 1 GROUP BY system, number
+                    ) latest ON latest.latest_id = s.id
+                    """
+                ).fetchall()
+            }
+            latest_attempt = {
+                (row["system"], row["number"]): self._snapshot_dict(row)
+                for row in connection.execute(
+                    """
+                    SELECT s.* FROM snapshots s
+                    JOIN (
+                        SELECT system, number, MAX(id) AS latest_id
+                        FROM snapshots GROUP BY system, number
+                    ) latest ON latest.latest_id = s.id
+                    """
+                ).fetchall()
+            }
+            stamp = self._execution_stamp(connection)
+        rows = []
+        for process in processes:
+            key = (process["system"], process["number"])
+            rows.append(
+                {
+                    "process": dict(process),
+                    "valid": latest_valid.get(key),
+                    "attempt": latest_attempt.get(key),
+                }
+            )
+        return {**stamp, "rows": rows}
+
+    def pending_occurrences(self) -> dict[str, Any]:
+        """Ocorrências ainda não levadas ao resumo executivo."""
+        with self._connection() as connection:
+            occurrences = connection.execute(
+                """
+                SELECT o.*, p.area, p.program, p.description AS process_description
+                FROM occurrences o
+                JOIN processes p ON p.system = o.system AND p.number = o.number
+                WHERE o.communicated = 0
+                ORDER BY p.area, p.program, o.system, o.number, o.detected_at, o.id
+                """
+            ).fetchall()
+            stamp = self._execution_stamp(connection)
+        return {**stamp, "occurrences": [dict(row) for row in occurrences]}
+
+    def mark_communicated(self, occurrence_ids: list[int]) -> int:
+        if not occurrence_ids:
+            return 0
+        with self._connection() as connection:
+            cursor = connection.executemany(
+                "UPDATE occurrences SET communicated = 1 WHERE id = ? AND communicated = 0",
+                [(occurrence_id,) for occurrence_id in occurrence_ids],
+            )
+            return cursor.rowcount
+
     def process_history(self, system: str, number: str) -> dict[str, Any]:
         system = canonical_system(system)
         with self._connection() as connection:
