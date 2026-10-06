@@ -20,6 +20,7 @@ from .reporting import (
     render_markdown,
     render_status,
 )
+from .sheets import GspreadWriter, SheetsPublishError, SheetsSettings, publish
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[2]
@@ -52,6 +53,10 @@ def _parser() -> argparse.ArgumentParser:
     )
     view.add_argument("--format", choices=("markdown", "csv"), default="markdown")
     view.add_argument("--saida", type=Path, help="Grava em arquivo em vez de imprimir.")
+    commands.add_parser(
+        "planilha",
+        help="Publica a visão atual na aba do robô no Google Sheets (exige [sheets] configurado).",
+    )
     summary = commands.add_parser(
         "resumo", help="Resumo executivo das ocorrências ainda não comunicadas."
     )
@@ -197,6 +202,12 @@ def _run(args: argparse.Namespace) -> int:
         else:
             print(text, end="")
         return 0
+    if args.command == "planilha":
+        settings = SheetsSettings.from_config(config, config_dir)
+        settings.validate()
+        count = publish(database, GspreadWriter(settings), settings.worksheet, stagnation)
+        print(f"Visão atual publicada na aba \"{settings.worksheet}\": {count} processo(s).")
+        return 0
     if args.command == "resumo":
         pending = database.pending_occurrences()
         print(render_executive_summary(pending), end="")
@@ -267,7 +278,7 @@ def main() -> None:
     args = _parser().parse_args()
     try:
         status = _run(args)
-    except (OSError, ValueError, LiveCollectionDisabled) as exc:
+    except (OSError, ValueError, LiveCollectionDisabled, SheetsPublishError) as exc:
         print(f"Erro: {exc}", file=sys.stderr)
         status = 2
     raise SystemExit(status)

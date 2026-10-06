@@ -54,6 +54,8 @@ Thumbs.db
 /tools/seasic-processos/config.toml
 /tools/seasic-processos/data/
 /tools/seasic-processos/browser_profiles/
+/tools/seasic-processos/credentials/
+**/*service-account*.json
 /tools/seasic-processos/**/*.sqlite
 /tools/seasic-processos/**/*.sqlite-shm
 /tools/seasic-processos/**/*.sqlite-wal

@@ -20,6 +20,17 @@ max_consecutive_failures = 3
 # Janela permitida, horário de Brasília, ex.: "05:00-08:00". Vazio = sem restrição.
 allowed_hours = ""
 
+[sheets]
+# Publicação da visão atual no Google Sheets (comando planilha). Ver docs/operacao.md.
+enabled = false
+# ID da planilha (trecho da URL entre /d/ e /edit). Compartilhe-a só com a conta de
+# serviço e com a equipe do Gabinete; nunca deixe acessível por link.
+spreadsheet_id = ""
+worksheet = "Visão atual — robô"
+# JSON da conta de serviço, fora do repositório e em pasta restrita. Também pode vir
+# da variável de ambiente SEASIC_SHEETS_CREDENTIALS.
+credentials_path = ""
+
 [collectors.SEI]
 enabled = false
 # true só para run/consultar sem janela; login sempre abre o navegador visível.

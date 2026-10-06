@@ -142,32 +142,43 @@ CURRENT_VIEW_COLUMNS = (
 )
 
 
-def _stamp_lines(data: dict) -> list[str]:
+def stamp_entries(data: dict) -> list[tuple[str, str]]:
+    """Carimbo de execução como pares (rótulo, texto), sem formatação."""
     last = data["last_execution"]
     last_successful = data["last_successful_execution"]
-    lines = [
-        f"- **Última execução bem-sucedida:** "
-        + (
+    entries = [
+        (
+            "Última execução bem-sucedida",
             f"{_local_time(last_successful['finished_at'])} · "
             f"{last_successful['succeeded']} processo(s) consultado(s) com êxito"
             if last_successful
-            else "nenhuma — não há coleta válida; ausência de dado não é ausência de movimentação"
-        ),
+            else "nenhuma — não há coleta válida; ausência de dado não é ausência de movimentação",
+        )
     ]
     if last and (not last_successful or last["id"] != last_successful["id"]):
-        lines.append(
-            f"- **Atenção:** a execução mais recente ({_local_time(last['started_at'])}) "
-            f"terminou como {last['status']}"
-            + (f" — {last['notes']}" if last["notes"] else "")
-            + ". Os dados abaixo podem estar desatualizados."
+        entries.append(
+            (
+                "Atenção",
+                f"a execução mais recente ({_local_time(last['started_at'])}) "
+                f"terminou como {last['status']}"
+                + (f" — {last['notes']}" if last["notes"] else "")
+                + ". Os dados abaixo podem estar desatualizados.",
+            )
         )
     elif last and last["status"] != "OK":
-        lines.append(
-            f"- **Execução parcial:** {last['failed']} falha(s)"
-            + (f" — {last['notes']}" if last["notes"] else "")
-            + "."
+        entries.append(
+            (
+                "Execução parcial",
+                f"{last['failed']} falha(s)"
+                + (f" — {last['notes']}" if last["notes"] else "")
+                + ".",
+            )
         )
-    return lines
+    return entries
+
+
+def _stamp_lines(data: dict) -> list[str]:
+    return [f"- **{label}:** {text}" for label, text in stamp_entries(data)]
 
 
 def days_column(rule: StagnationRule | None) -> str:
