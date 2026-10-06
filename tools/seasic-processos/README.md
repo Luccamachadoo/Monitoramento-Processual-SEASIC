@@ -38,6 +38,7 @@ PYTHONPATH=src python3 -m seasic_monitor.cli visao                       # estad
 PYTHONPATH=src python3 -m seasic_monitor.cli visao --format csv --saida data/visao.csv
 PYTHONPATH=src python3 -m seasic_monitor.cli resumo                      # novidades ainda não comunicadas
 PYTHONPATH=src python3 -m seasic_monitor.cli resumo --marcar-comunicado
+PYTHONPATH=src python3 -m seasic_monitor.cli planilha                    # publica a visão no Google Sheets
 PYTHONPATH=src python3 -m seasic_monitor.cli history SEI DEMO-001
 PYTHONPATH=src python3 -m seasic_monitor.cli import-catalog cadastro.csv
 PYTHONPATH=src python3 -m seasic_monitor.cli backup data/backup/processos.sqlite
@@ -132,9 +133,11 @@ um número igual em SEI e e-DOC representa dois processos distintos.
   referência e interrupção por sessão expirada ou falhas técnicas seguidas.
 - Visão atual (Markdown/CSV) e resumo executivo com controle do que já foi
   comunicado.
+- Publicação da visão atual no Google Sheets (`planilha`), numa aba própria do robô.
 
-O limite de processo parado é configurável em dias corridos. A decisão entre dias
-corridos e dias úteis ainda precisa ser confirmada pelo Gabinete.
+Processo parado conta **dias úteis** (decisão do Gabinete): fins de semana,
+feriados nacionais e os feriados listados em `[monitor].holidays` não contam.
+`stagnant_day_kind = "corridos"` volta à contagem em dias corridos.
 
 ## O que não está habilitado
 
@@ -153,9 +156,9 @@ Antes de habilitar uma coleta real, o operador institucional precisa confirmar:
 5. seletores e campos mínimos validados em processo de teste;
 6. intervalo e teto diário aprovados.
 
-Planilhas e serviços em nuvem também não estão conectados. A escolha entre
-`.xlsx` e planilha em nuvem permanece pendente; até essa decisão, os relatórios
-são Markdown/JSON e o SQLite é a fonte do histórico.
+A publicação no Google Sheets também vem desativada: exige planilha, conta de
+serviço aprovada pela TI e o extra `sheets` (`python3 -m pip install -e '.[sheets]'`).
+O SQLite continua sendo a fonte do histórico; a planilha é só visualização.
 
 ## Desenvolvimento
 

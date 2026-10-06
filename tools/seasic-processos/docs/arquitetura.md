@@ -40,8 +40,9 @@ Regras:
   normalizado + data do andamento. `setor_exibicao` fica fora.
 - **Mudança de unidade / novo andamento** — só quando a fotografia válida atual
   difere da última válida; repetir a execução no mesmo dia não duplica avisos.
-- **Parado** — regra temporal, independente do hash: dias corridos entre a data
-  do andamento e a data de Brasília da coleta ≥ `stagnant_after_days`. Um aviso por
+- **Parado** — regra temporal, independente do hash: **dias úteis** entre a data
+  do andamento e a data de Brasília da coleta ≥ `stagnant_after_days`. Descontam-se
+  fins de semana, feriados nacionais e os de `[monitor].holidays`. Um aviso por
   andamento.
 - **Falha** — um aviso quando o status de falha de um processo muda; falhas
   repetidas iguais não geram novo aviso.
@@ -74,11 +75,15 @@ Em série, um processo por vez, com:
 - `visao` — visão executiva da seção 7 da v2 (Markdown ou CSV), com carimbo.
 - `resumo` — ocorrências não comunicadas por área e programa; `--marcar-comunicado`.
 - `history` — histórico completo de um processo, sem depender de planilha.
+- `planilha` — publica a visão atual no **Google Sheets**, numa aba própria do robô,
+  com conta de serviço (escopo só de planilhas) e escrita como texto puro.
 
 ## Decisões pendentes
 
-1. Planilhas: `.xlsx` ou planilha em nuvem (antes da Fase 5). Até lá, CSV da `visao`.
-2. "Parado" em dias corridos ou úteis, e se o limite varia por área.
+Decididas: planilha no Google Sheets; "parado" em dias úteis.
+
+1. Se o limite de "parado" varia por área.
+2. Feriados estaduais, municipais e pontos facultativos a cadastrar em `holidays`.
 3. Regra do `setor_exibicao` quando o processo está aberto em várias unidades
    (hoje a visão mostra todas).
 4. Prazo de retenção de logs e backups; local institucional de execução.

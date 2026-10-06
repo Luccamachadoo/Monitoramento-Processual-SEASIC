@@ -47,8 +47,11 @@ demonstração apontando para o banco institucional.
 - **INVALIDA:** tentativa preservada, mas não serve de base para comparação.
 - **Falha atual:** última tentativa do processo não foi válida. A fotografia
   válida anterior continua disponível no histórico.
-- **PARADO:** data de último movimento atingiu o limite em dias corridos
-  definido na configuração. Avisado uma vez por andamento.
+- **PARADO:** o último movimento atingiu o limite em dias úteis definido na
+  configuração (`stagnant_after_days`). Fins de semana, feriados nacionais
+  (inclusive Sexta-feira Santa) e os feriados de `[monitor].holidays` não contam.
+  Cadastre ali feriados estaduais e municipais (ex.: 8 de julho em Sergipe) e os
+  pontos facultativos adotados. Avisado uma vez por andamento.
 - **Execução FALHOU sem fotografias:** a sessão estava expirada, a tela de consulta
   não apareceu ou o navegador não abriu. Nada foi consultado; o último estado
   válido continua valendo e as observações da execução dizem a causa.
@@ -134,14 +137,42 @@ validação terminar.
 1. `run --sistema e-DOC` (e depois `--sistema SEI`, quando habilitado).
 2. `resumo --marcar-comunicado` — texto para o Gabinete com o que mudou, o que está
    parado e o que falhou, e o carimbo da execução.
-3. `visao --format csv --saida <pasta restrita>/visao.csv` — visão atual.
+3. `planilha` — atualiza a aba do robô no Google Sheets (ou
+   `visao --format csv --saida <pasta restrita>/visao.csv`, enquanto a planilha não
+   estiver liberada).
 4. `backup <pasta de backup>/processos-AAAA-MM-DD.sqlite` periodicamente.
 
-## Atualização de planilhas
+## Planilha no Google Sheets
 
-Ainda não implementada. Até lá, `visao --format csv` gera a visão atual em CSV.
-O formato `.xlsx` versus planilha em nuvem precisa ser decidido antes da integração. A saída futura deve atualizar apenas campos
-gerenciados pelo robô, usar a chave sistema+número e mostrar horário da última
-execução bem-sucedida e contagem de sucessos/falhas. O histórico oficial desta
-ferramenta continuará no banco, não na planilha.
+O comando `planilha` publica a visão atual numa aba do Google Sheets. O robô
+reescreve apenas a aba configurada (padrão "Visão atual — robô"); as demais abas
+e anotações da equipe ficam intactas. Layout da aba:
 
+- **A1:** título; **A2:** carimbo da última execução bem-sucedida e quantos
+  processos foram consultados com êxito — sempre nessa posição;
+- **A3:** alerta quando a execução mais recente falhou ou foi parcial;
+- **A4:** horário da publicação; **linha 6:** cabeçalho; da linha 7 em diante, um
+  processo por linha.
+
+O texto é gravado como texto puro (RAW): nada vindo do SEI/e-DOC vira fórmula.
+
+### Preparação (uma vez, com a TI)
+
+1. Criar no Google Cloud do órgão um projeto com a API do Google Sheets habilitada
+   e uma **conta de serviço** só para esta rotina; gerar a chave JSON.
+2. Guardar o JSON em pasta restrita da máquina de execução, fora do repositório
+   e de pastas sincronizadas. Ele é segredo, como uma senha.
+3. Criar a planilha e compartilhá-la **somente** com o e-mail da conta de serviço
+   (editor) e com a equipe do Gabinete. Nunca usar "qualquer pessoa com o link".
+4. Preencher `[sheets]` no `config.toml`: `enabled = true`, `spreadsheet_id` (trecho
+   da URL entre `/d/` e `/edit`) e `credentials_path` — ou definir
+   `SEASIC_SHEETS_CREDENTIALS` com o caminho do JSON.
+5. Instalar o extra: `python3 -m pip install -e '.[sheets]'`.
+6. Rodar `planilha` uma vez numa planilha de teste e conferir o layout.
+
+A conta de serviço usa apenas o escopo de planilhas (sem acesso ao Drive). Se a
+chave vazar, revogue-a no Google Cloud e gere outra.
+
+A publicação na planilha oficial só deve começar depois da validação de 5 dias
+úteis sem divergência (critério de aceitação do projeto). O histórico continua
+no SQLite; a planilha é só a camada de visualização.
