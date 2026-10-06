@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 import os
 from pathlib import Path
@@ -37,6 +37,8 @@ class PlaywrightCollectorConfig:
     entry_url: str
     profile_path: Path
     selectors: dict[str, str]
+    frames: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    headless: bool = False
 
     @classmethod
     def from_mapping(
@@ -52,12 +54,25 @@ class PlaywrightCollectorConfig:
             str(key): str(value).strip()
             for key, value in config.get("selectors", {}).items()
         }
+        frames: dict[str, tuple[str, ...]] = {}
+        for key, value in config.get("frames", {}).items():
+            chain = (value,) if isinstance(value, str) else tuple(value)
+            chain = tuple(str(item).strip() for item in chain if str(item).strip())
+            if chain:
+                frames[str(key)] = chain
+        unknown = sorted(set(frames) - set(selectors))
+        if unknown:
+            raise ValueError(
+                "frames referem seletores inexistentes: " + ", ".join(unknown)
+            )
         return cls(
             system=canonical_system(system),
             enabled=bool(config.get("enabled", False)),
             entry_url=str(config.get("entry_url", "")).strip(),
             profile_path=profile,
             selectors=selectors,
+            frames=frames,
+            headless=bool(config.get("headless", False)),
         )
 
 
@@ -122,7 +137,7 @@ class PlaywrightCollector:
         try:
             self._context = await self._playwright.chromium.launch_persistent_context(
                 user_data_dir=str(self.config.profile_path),
-                headless=False,
+                headless=self.config.headless,
             )
             self._page = (
                 self._context.pages[0]
@@ -150,15 +165,14 @@ class PlaywrightCollector:
     async def is_session_expired(self) -> bool:
         if self._page is None:
             return True
-        return await self._is_visible(self.config.selectors.get("session_expired", ""))
+        return await self._is_visible("session_expired")
 
     async def is_ready(self) -> bool:
         if self._page is None or await self.is_session_expired():
             return False
-        selector = self.config.selectors.get("process_input", "")
-        if not selector:
+        if not self.config.selectors.get("process_input", ""):
             return False
-        locator = self._page.locator(selector).first
+        locator = self._locator("process_input").first
         try:
             await locator.wait_for(state="visible", timeout=5_000)
             return True
@@ -210,39 +224,39 @@ class PlaywrightCollector:
         selectors = self.config.selectors
         display_number = ""
         try:
-            if await self._is_visible(selectors.get("session_expired", "")):
+            if await self._is_visible("session_expired"):
                 return self._failed(
                     process,
                     CollectionStatus.SESSION_EXPIRED,
                     "SESSAO_EXPIRADA",
                     "Sessão expirada; é necessário login humano autorizado.",
                 )
-            if not await self._is_visible(selectors["process_input"]):
+            if not await self._is_visible("process_input"):
                 await self._page.goto(
                     self.config.entry_url,
                     wait_until="domcontentloaded",
                     timeout=30_000,
                 )
-                await self._page.locator(selectors["process_input"]).wait_for(
+                await self._locator("process_input").first.wait_for(
                     state="visible",
                     timeout=30_000,
                 )
-            await self._page.locator(selectors["process_input"]).fill(process.number)
-            await self._page.locator(selectors["search_button"]).click()
+            await self._locator("process_input").fill(process.number)
+            await self._locator("search_button").click()
             try:
-                await self._page.locator(selectors["result_ready"]).wait_for(
+                await self._locator("result_ready").first.wait_for(
                     state="visible",
                     timeout=30_000,
                 )
             except self._timeout_error:
-                if await self._is_visible(selectors.get("session_expired", "")):
+                if await self._is_visible("session_expired"):
                     return self._failed(
                         process,
                         CollectionStatus.SESSION_EXPIRED,
                         "SESSAO_EXPIRADA",
                         "Sessão expirada; é necessário login humano autorizado.",
                     )
-                if await self._is_visible(selectors.get("no_result", "")):
+                if await self._is_visible("no_result"):
                     return self._failed(
                         process,
                         CollectionStatus.NOT_FOUND,
@@ -256,7 +270,7 @@ class PlaywrightCollector:
                     "O seletor do resultado não apareceu dentro do prazo.",
                 )
 
-            if await self._is_visible(selectors.get("no_result", "")):
+            if await self._is_visible("no_result"):
                 return self._failed(
                     process,
                     CollectionStatus.NOT_FOUND,
@@ -265,7 +279,7 @@ class PlaywrightCollector:
                 )
 
             if selectors.get("detail_link"):
-                candidates = self._page.locator(selectors["result_row"]).filter(
+                candidates = self._locator("result_row").filter(
                     has_text=process.number
                 )
                 candidate_count = await candidates.count()
@@ -304,12 +318,12 @@ class PlaywrightCollector:
                 display_number = rows[0][1]
                 await rows[0][0].locator(selectors["detail_link"]).click()
                 try:
-                    await self._page.locator(selectors["detail_ready"]).wait_for(
+                    await self._locator("detail_ready").first.wait_for(
                         state="visible",
                         timeout=30_000,
                     )
                 except self._timeout_error:
-                    if await self._is_visible(selectors.get("session_expired", "")):
+                    if await self._is_visible("session_expired"):
                         return self._failed(
                             process,
                             CollectionStatus.SESSION_EXPIRED,
@@ -325,12 +339,12 @@ class PlaywrightCollector:
 
             units = tuple(
                 unit.strip()
-                for unit in await self._page.locator(selectors["units_open"]).all_inner_texts()
+                for unit in await self._locator("units_open").all_inner_texts()
                 if unit.strip()
             )
-            last_movement = await self._text(selectors["last_movement"])
+            last_movement = await self._text("last_movement")
             movement_date = _normalize_movement_date(
-                await self._text(selectors["movement_date"])
+                await self._text("movement_date")
             )
             observation = Observation(
                 system=process.system,
@@ -367,14 +381,25 @@ class PlaywrightCollector:
                 f"Falha técnica no navegador ({type(exc).__name__}).",
             )
 
-    async def _is_visible(self, selector: str) -> bool:
-        if not selector:
+    def _locator(self, key: str) -> Any:
+        """Localiza o seletor configurado, entrando nos iframes indicados em `frames`.
+
+        O SEI exibe árvore e conteúdo do processo em iframes; `frames.<chave>`
+        aceita um seletor de iframe ou uma lista, do mais externo ao mais interno.
+        """
+        scope = self._page
+        for frame in self.config.frames.get(key, ()):
+            scope = scope.frame_locator(frame)
+        return scope.locator(self.config.selectors[key])
+
+    async def _is_visible(self, key: str) -> bool:
+        if not self.config.selectors.get(key):
             return False
-        locator = self._page.locator(selector).first
+        locator = self._locator(key).first
         return await locator.count() > 0 and await locator.is_visible()
 
-    async def _text(self, selector: str) -> str:
-        locator = self._page.locator(selector).first
+    async def _text(self, key: str) -> str:
+        locator = self._locator(key).first
         if await locator.count() == 0:
             return ""
         return (await locator.inner_text()).strip()

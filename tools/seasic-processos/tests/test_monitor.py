@@ -356,6 +356,20 @@ class MonitorDatabaseTests(unittest.TestCase):
         again = render_executive_summary(self.database.pending_occurrences())
         self.assertIn("Nenhuma novidade desde o último resumo.", again)
 
+    def test_frames_must_reference_configured_selectors(self) -> None:
+        with self.assertRaises(ValueError):
+            PlaywrightCollectorConfig.from_mapping(
+                "SEI",
+                {"selectors": {"units_open": ".u"}, "frames": {"unidades": "#ifr"}},
+                self.temp_dir.name,
+            )
+        config = PlaywrightCollectorConfig.from_mapping(
+            "SEI",
+            {"selectors": {"units_open": ".u"}, "frames": {"units_open": ["#a", "#b"]}},
+            self.temp_dir.name,
+        )
+        self.assertEqual(config.frames, {"units_open": ("#a", "#b")})
+
 
 if __name__ == "__main__":
     unittest.main()

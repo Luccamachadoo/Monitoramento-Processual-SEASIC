@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, time, timezone
 from pathlib import Path
 from typing import Any, Protocol
@@ -117,6 +117,8 @@ async def prepare_session(
         config_dir,
         require_collection_selectors=False,
     )
+    # O login é sempre feito pelo operador numa janela visível.
+    collector.config = replace(collector.config, headless=False)
     try:
         try:
             await collector.start(require_collection_selectors=False)
