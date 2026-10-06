@@ -38,6 +38,18 @@ PYTHONPATH=src python3 -m seasic_monitor.cli import-catalog cadastro.csv
 PYTHONPATH=src python3 -m seasic_monitor.cli backup data/backup/processos.sqlite
 ```
 
+Após autorização e configuração local, o fluxo específico e-DOC é:
+
+```bash
+PYTHONPATH=src python3 -m seasic_monitor.cli login-edoc
+PYTHONPATH=src python3 -m seasic_monitor.cli run-edoc
+```
+
+`login-edoc` abre um perfil persistente do navegador para o operador autenticar-se
+manualmente. `run-edoc` percorre apenas processos e-DOC ativos, em série, usando
+o intervalo e o teto definidos no TOML. Ambos recusam a execução com a
+configuração de exemplo, que mantém o coletor desativado e sem URL/seletores.
+
 `--database` e `--config` são opções globais e devem vir antes do comando.
 Exemplo:
 
@@ -80,11 +92,12 @@ corridos e dias úteis ainda precisa ser confirmada pelo Gabinete.
 
 ## O que não está habilitado
 
-O comando `run` bloqueia explicitamente a consulta real. O adaptador Playwright é
-apenas uma base genérica: seletores, fluxo de navegação e comportamento de cada
-sistema precisam ser configurados e validados com conta autorizada no ambiente
-institucional. O extra Playwright não está instalado neste ambiente. Não foram
-incluídos URLs, credenciais, perfis de navegador nem dados reais.
+O comando genérico `run` continua bloqueado. O adaptador Playwright e os
+comandos `login-edoc`/`run-edoc` são uma base genérica específica para e-DOC:
+seletores, fluxo de navegação e comportamento do sistema precisam ser
+configurados e validados com conta autorizada no ambiente institucional. O extra
+Playwright não está instalado neste ambiente. Não foram incluídos URLs,
+credenciais, perfis de navegador nem dados reais.
 
 Antes de habilitar uma coleta real, o operador institucional precisa confirmar:
 

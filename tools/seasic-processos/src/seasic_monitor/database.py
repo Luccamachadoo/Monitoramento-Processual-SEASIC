@@ -208,7 +208,7 @@ class MonitorDatabase:
         if succeeded + failed != total:
             raise ValueError("O total deve ser igual a sucessos mais falhas.")
         status = "FALHOU" if total > 0 and succeeded == 0 else (
-            "PARCIAL" if failed else "OK"
+            "PARCIAL" if failed or notes else "OK"
         )
         with self._connection() as connection:
             cursor = connection.execute(

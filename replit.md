@@ -31,6 +31,7 @@ Base local de desenvolvimento para registrar consultas, preservar histórico e d
 
 - O monitor começa como ferramenta Python local e usa SQLite; não depende do scaffold web/Postgres do workspace.
 - A demonstração contém somente registros sintéticos; coletores reais SEI/e-DOC permanecem bloqueados até autorização e configuração no ambiente institucional.
+- e-DOC é o primeiro sistema escolhido para integrar; a configuração real segue desativada até haver URL e seletores aprovados.
 - Execuções, fotografias e ocorrências ficam separadas do cadastro mestre; falhas não substituem o último estado válido.
 - O banco local, credenciais futuras, perfis de navegador e dados reais nunca devem ser adicionados ao Git ou a esta hospedagem sem autorização institucional.
 - O formato da planilha de destino (`.xlsx` ou nuvem) continua pendente; não manter os dois formatos em paralelo.

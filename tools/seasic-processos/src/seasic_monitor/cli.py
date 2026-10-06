@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import csv
 import os
 from pathlib import Path
@@ -10,7 +11,7 @@ import tomllib
 from .collectors import LiveCollectionDisabled
 from .database import MonitorDatabase
 from .domain import ProcessRecord
-from .monitor import run_demo
+from .monitor import prepare_edoc_session, run_demo, run_edoc
 from .reporting import render_json, render_markdown, render_status
 
 
@@ -48,7 +49,15 @@ def _parser() -> argparse.ArgumentParser:
     backup.add_argument("destination", type=Path)
     commands.add_parser(
         "run",
-        help="Consulta real (bloqueada nesta versão até autorização e configuração local).",
+        help="Consulta genérica bloqueada; configure o coletor e-DOC para usar run-edoc.",
+    )
+    commands.add_parser(
+        "login-edoc",
+        help="Abre o perfil local do e-DOC para autenticação manual pelo operador.",
+    )
+    commands.add_parser(
+        "run-edoc",
+        help="Consulta processos e-DOC ativos em série (exige configuração institucional).",
     )
     return parser
 
@@ -132,7 +141,7 @@ def _run(args: argparse.Namespace) -> int:
         print(f"Execução sintética {run_id} gravada em: {database.path}")
         print(render_markdown(database.run_report(run_id)))
         return 0
-    if args.command != "run":
+    if args.command not in {"run", "run-edoc", "login-edoc"}:
         database.initialize()
     if args.command == "status":
         print(render_status(database.run_report()))
@@ -156,6 +165,36 @@ def _run(args: argparse.Namespace) -> int:
         database.initialize()
         backup_path = database.backup(args.destination)
         print(f"Backup SQLite criado em: {backup_path}")
+        return 0
+    if args.command == "login-edoc":
+        logged_in = asyncio.run(
+            prepare_edoc_session(
+                config.get("collectors", {}).get("EDOC", {}),
+                config_dir,
+            )
+        )
+        if logged_in:
+            print("Login manual concluído; sessão local pronta para consulta.")
+        else:
+            print("A sessão já estava autenticada; nenhuma credencial foi solicitada.")
+        return 0
+    if args.command == "run-edoc":
+        run_id = asyncio.run(
+            run_edoc(
+                database=database,
+                collector_settings=config.get("collectors", {}).get("EDOC", {}),
+                config_dir=config_dir,
+                stagnant_after_days=stagnant_after_days,
+                min_interval_seconds=float(
+                    config.get("monitor", {}).get("min_interval_seconds", 5)
+                ),
+                max_processes_per_run=int(
+                    config.get("monitor", {}).get("max_processes_per_run", 500)
+                ),
+            )
+        )
+        print(f"Execução e-DOC {run_id} gravada em: {database.path}")
+        print(render_markdown(database.run_report(run_id)))
         return 0
     if args.command == "run":
         raise LiveCollectionDisabled(

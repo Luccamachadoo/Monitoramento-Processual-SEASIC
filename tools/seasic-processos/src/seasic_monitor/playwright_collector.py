@@ -68,7 +68,7 @@ class PlaywrightCollector:
         self._page: Any = None
         self._timeout_error: type[BaseException] | None = None
 
-    async def start(self) -> None:
+    def validate_config(self) -> None:
         if not self.config.enabled:
             raise LiveCollectionDisabled(
                 f"Coletor {self.config.system} desativado na configuração."
@@ -79,6 +79,9 @@ class PlaywrightCollector:
             raise LiveCollectionDisabled(
                 f"Configuração incompleta para {self.config.system}: {details}."
             )
+
+    async def start(self) -> None:
+        self.validate_config()
         try:
             from playwright.async_api import TimeoutError as PlaywrightTimeoutError
             from playwright.async_api import async_playwright
@@ -122,6 +125,55 @@ class PlaywrightCollector:
         if self._playwright is not None:
             await self._playwright.stop()
             self._playwright = None
+
+    async def is_session_expired(self) -> bool:
+        if self._page is None:
+            return True
+        return await self._is_visible(self.config.selectors.get("session_expired", ""))
+
+    async def is_ready(self) -> bool:
+        if self._page is None or await self.is_session_expired():
+            return False
+        selector = self.config.selectors.get("process_input", "")
+        if not selector:
+            return False
+        locator = self._page.locator(selector).first
+        try:
+            await locator.wait_for(state="visible", timeout=5_000)
+            return True
+        except self._timeout_error:
+            return False
+
+    async def wait_for_manual_login(self) -> bool:
+        """Wait for the operator to authenticate in the visible browser window."""
+        if self._page is None:
+            raise RuntimeError("Inicie o navegador antes do login manual.")
+        if await self.is_ready():
+            return False
+        import asyncio
+        import sys
+
+        if not sys.stdin.isatty():
+            raise LiveCollectionDisabled(
+                "A sessão precisa de login manual. Execute login-edoc localmente "
+                "em um terminal interativo."
+            )
+        await asyncio.to_thread(
+            input,
+            "Conclua o login manualmente na janela oficial do e-DOC e pressione Enter. "
+            "Não cole credenciais neste terminal.\n",
+        )
+        await self._page.goto(
+            self.config.entry_url,
+            wait_until="domcontentloaded",
+            timeout=30_000,
+        )
+        if not await self.is_ready():
+            raise LiveCollectionDisabled(
+                "A tela de consulta não ficou disponível após o login. "
+                "Verifique a sessão e os seletores autorizados."
+            )
+        return True
 
     async def collect(self, process: ProcessRecord) -> Observation:
         if self._page is None:

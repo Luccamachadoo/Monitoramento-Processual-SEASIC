@@ -64,6 +64,26 @@ execução no ambiente aprovado. O primeiro coletor deverá:
 - registrar uma fotografia inválida em caso de erro, sem apagar estado válido;
 - não extrair conteúdo integral de documentos nem incluí-lo em logs.
 
+### e-DOC — primeiro alvo de integração
+
+Já existe um fluxo configurável `login-edoc` / `run-edoc`, mas a configuração de
+exemplo está desativada e não tem endereço nem seletores. Antes de habilitá-lo:
+
+1. obtenha ciência/autorização da ASSTI/STI e confirme a conta de consulta;
+2. execute em máquina institucional com navegador visível e terminal interativo;
+3. mapeie e valide os seletores para busca, resultado, unidades, andamento, data,
+   processo não localizado e sessão expirada;
+4. configure URL e seletores no `config.toml` local (nunca no arquivo de exemplo
+   versionado);
+5. autentique-se pela janela oficial com `login-edoc`; a ferramenta não lê nem
+   preenche usuário, senha, MFA ou CAPTCHA;
+6. valide um processo conhecido antes de qualquer lote.
+
+`run-edoc` consulta apenas processos e-DOC ativos, um por vez, aplicando o
+intervalo e o teto de processos do TOML. Se a sessão não estiver pronta ou o
+layout não corresponder aos seletores, registra a falha sem substituir a última
+fotografia válida.
+
 Antes de lote, validar manualmente de 8 a 12 processos durante cinco dias úteis,
 conforme o critério do projeto. O lote não deve atualizar planilhas até essa
 validação terminar.

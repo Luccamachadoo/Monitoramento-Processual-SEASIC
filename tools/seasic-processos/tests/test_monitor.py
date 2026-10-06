@@ -13,6 +13,7 @@ from seasic_monitor.playwright_collector import (
     PlaywrightCollectorConfig,
     _normalize_movement_date,
 )
+from seasic_monitor.monitor import run_edoc
 from seasic_monitor.reporting import render_markdown
 
 
@@ -158,6 +159,23 @@ class MonitorDatabaseTests(unittest.TestCase):
         collector = PlaywrightCollector(config)
         with self.assertRaises(LiveCollectionDisabled):
             asyncio.run(collector.start())
+
+    def test_edoc_runner_refuses_to_start_before_approval(self) -> None:
+        self.database.upsert_process(
+            ProcessRecord(system="e-DOC", number="200/2026", area="TESTE")
+        )
+        with self.assertRaises(LiveCollectionDisabled):
+            asyncio.run(
+                run_edoc(
+                    database=self.database,
+                    collector_settings={"enabled": False},
+                    config_dir=self.temp_dir.name,
+                    stagnant_after_days=30,
+                    min_interval_seconds=5,
+                    max_processes_per_run=500,
+                )
+            )
+        self.assertIsNone(self.database.run_report())
 
     def test_local_date_is_normalized_to_iso(self) -> None:
         self.assertEqual(_normalize_movement_date("06/10/2026"), "2026-10-06")
