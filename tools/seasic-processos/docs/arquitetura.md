@@ -78,6 +78,14 @@ Em série, um processo por vez, com:
 - `planilha` — publica a visão atual no **Google Sheets**, numa aba própria do robô,
   com conta de serviço (escopo só de planilhas) e escrita como texto puro.
 
+## Operação
+
+- `rotina` executa o dia inteiro (coleta → resumo e visão em arquivo → planilha →
+  backup com rotação → limpeza de logs), com etapas isoladas e código de saída 1
+  quando alguma falha.
+- Log técnico diário com retenção (`[logs]`), só com identificador, status e
+  código de erro.
+
 ## Decisões pendentes
 
 Decididas: planilha no Google Sheets; "parado" em dias úteis.
@@ -86,6 +94,7 @@ Decididas: planilha no Google Sheets; "parado" em dias úteis.
 2. Feriados estaduais, municipais e pontos facultativos a cadastrar em `holidays`.
 3. Regra do `setor_exibicao` quando o processo está aberto em várias unidades
    (hoje a visão mostra todas).
-4. Prazo de retenção de logs e backups; local institucional de execução.
+4. Confirmar os prazos de retenção (padrão: logs 180 dias, 30 backups diários) e o
+   local institucional de execução e de cópia dos backups.
 5. Canal e formato do resumo para o Gabinete (o texto Markdown já serve para colar
    em e-mail ou mensagem).

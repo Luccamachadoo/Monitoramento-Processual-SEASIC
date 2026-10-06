@@ -40,7 +40,8 @@ PYTHONPATH=src python3 -m seasic_monitor.cli resumo                      # novid
 PYTHONPATH=src python3 -m seasic_monitor.cli resumo --marcar-comunicado
 PYTHONPATH=src python3 -m seasic_monitor.cli planilha                    # publica a visão no Google Sheets
 PYTHONPATH=src python3 -m seasic_monitor.cli history SEI DEMO-001
-PYTHONPATH=src python3 -m seasic_monitor.cli import-catalog cadastro.csv
+PYTHONPATH=src python3 -m seasic_monitor.cli import-catalog cadastro.csv [--inativar-ausentes]
+PYTHONPATH=src python3 -m seasic_monitor.cli rotina                      # rotina diária completa
 PYTHONPATH=src python3 -m seasic_monitor.cli backup data/backup/processos.sqlite
 ```
 
@@ -134,6 +135,8 @@ um número igual em SEI e e-DOC representa dois processos distintos.
 - Visão atual (Markdown/CSV) e resumo executivo com controle do que já foi
   comunicado.
 - Publicação da visão atual no Google Sheets (`planilha`), numa aba própria do robô.
+- Rotina diária (`rotina`) para o Agendador de Tarefas, com backup com rotação e
+  log técnico diário com retenção.
 
 Processo parado conta **dias úteis** (decisão do Gabinete): fins de semana,
 feriados nacionais e os feriados listados em `[monitor].holidays` não contam.

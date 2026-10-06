@@ -132,15 +132,62 @@ Antes de lote, validar manualmente de 8 a 12 processos durante cinco dias úteis
 conforme o critério do projeto. O lote não deve atualizar planilhas até essa
 validação terminar.
 
-## Rotina diária sugerida
+## Rotina diária
 
-1. `run --sistema e-DOC` (e depois `--sistema SEI`, quando habilitado).
-2. `resumo --marcar-comunicado` — texto para o Gabinete com o que mudou, o que está
-   parado e o que falhou, e o carimbo da execução.
-3. `planilha` — atualiza a aba do robô no Google Sheets (ou
-   `visao --format csv --saida <pasta restrita>/visao.csv`, enquanto a planilha não
-   estiver liberada).
-4. `backup <pasta de backup>/processos-AAAA-MM-DD.sqlite` periodicamente.
+`rotina` faz tudo numa chamada, na ordem:
+
+1. coleta de cada sistema com `enabled = true` (e-DOC, depois SEI);
+2. resumo executivo gravado em `[rotina].reports_dir` como
+   `resumo-AAAA-MM-DD-HHMM.md` — com `mark_communicated = true`, o que foi gravado
+   não se repete no dia seguinte;
+3. visão atual em CSV na mesma pasta (`visao-AAAA-MM-DD-HHMM.csv`);
+4. planilha no Google Sheets, se `[sheets] enabled = true`;
+5. backup `processos-AAAA-MM-DD.sqlite` em `[rotina].backup_dir`, mantendo os
+   `backup_keep` mais recentes;
+6. remoção dos logs mais antigos que `[logs].retention_days`.
+
+Cada etapa é independente: se a coleta falhar (sessão expirada, layout mudou), o
+resumo, a visão e a planilha ainda são gerados — e mostram que **não houve coleta
+válida**, em vez de parecerem "sem movimentação". A rotina imprime uma linha por
+etapa e termina com código 1 se alguma falhou.
+
+A rotina é **assistida**: quando a sessão expira, alguém precisa rodar `login` e
+autenticar-se na janela oficial. Confira o resultado todo dia.
+
+### Agendador de Tarefas do Windows
+
+Exemplo para rodar de segunda a sexta às 06:30 (ajuste os caminhos; use a conta
+autorizada, com sessão do Windows aberta para o navegador persistente):
+
+```bat
+schtasks /Create /TN "SEASIC Monitoramento" /SC WEEKLY /D MON,TUE,WED,THU,FRI /ST 06:30 ^
+  /TR "cmd /c cd /d C:\SEASIC\seasic-processos && set PYTHONPATH=src && python -m seasic_monitor.cli rotina >> logs\agendador.txt 2>&1"
+```
+
+Na tarefa, marque "Executar somente quando o usuário estiver conectado": o
+navegador usa o perfil do operador. O resultado de cada execução fica no
+histórico da tarefa (código 0 = tudo OK, 1 = alguma etapa falhou) e no log do dia.
+
+### Logs técnicos
+
+`logs/seasic-AAAA-MM-DD.log` registra início e fim de cada execução, uma linha por
+processo (`processo=SISTEMA:NUMERO status=… comparacao=… erro=…`) e o resultado de
+cada etapa da rotina. Não registra andamento, unidade, interessado nem conteúdo
+de documento. Arquivos mais antigos que `retention_days` (padrão 180) são
+apagados pela rotina.
+
+### Backups
+
+A rotina mantém `backup_keep` cópias diárias (padrão 30) na máquina. Copie-as
+periodicamente para um local institucional fora dela e teste a restauração.
+
+## Cadastro Mestre
+
+`import-catalog cadastro.csv` valida o arquivo inteiro antes de gravar: uma linha
+inválida ou um processo repetido cancelam a importação toda. Processos ativos no
+banco que não aparecem no CSV são listados como aviso e continuam monitorados;
+com `--inativar-ausentes`, são inativados com o motivo "Ausente do cadastro
+importado em DD/MM/AAAA". O histórico deles é preservado.
 
 ## Planilha no Google Sheets
 
