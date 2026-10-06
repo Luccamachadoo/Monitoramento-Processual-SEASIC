@@ -3,7 +3,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import csv
-from dataclasses import asdict
+from dataclasses import asdict, replace
+from datetime import datetime
 import os
 from pathlib import Path
 import sys
@@ -12,7 +13,13 @@ import tomllib
 from .collectors import LiveCollectionDisabled
 from .database import MonitorDatabase
 from .logs import LogSettings, configure_logging
-from .domain import ProcessRecord, StagnationRule, canonical_system
+from .domain import (
+    BRAZIL_TZ,
+    ProcessRecord,
+    StagnationRule,
+    canonical_system,
+    display_system,
+)
 from .monitor import RunPolicy, consult_one, prepare_session, run_collection, run_demo
 from .reporting import (
     render_current_view,
@@ -76,6 +83,11 @@ def _parser() -> argparse.ArgumentParser:
     history.add_argument("number", help="Número cadastrado do processo")
     catalog = commands.add_parser("import-catalog", help="Importa ou atualiza um CSV de cadastro.")
     catalog.add_argument("csv_file", type=Path)
+    catalog.add_argument(
+        "--inativar-ausentes",
+        action="store_true",
+        help="Inativa, com motivo registrado, processos ativos que não estão no CSV.",
+    )
     backup = commands.add_parser("backup", help="Cria uma cópia SQLite consistente.")
     backup.add_argument("destination", type=Path)
     login = commands.add_parser(
@@ -123,8 +135,10 @@ def _database_path(args: argparse.Namespace, config: dict, config_dir: Path) -> 
     return path
 
 
-def _import_catalog(database: MonitorDatabase, csv_path: Path) -> int:
-    imported = 0
+def _read_catalog(csv_path: Path) -> list[ProcessRecord]:
+    """Lê e valida o CSV inteiro antes de gravar qualquer linha."""
+    records: list[ProcessRecord] = []
+    seen: dict[tuple[str, str], int] = {}
     with csv_path.open("r", encoding="utf-8-sig", newline="") as file:
         reader = csv.DictReader(file)
         required = {"system", "numero"}
@@ -155,9 +169,14 @@ def _import_catalog(database: MonitorDatabase, csv_path: Path) -> int:
                 )
             except ValueError as exc:
                 raise ValueError(f"Linha {line}: {exc}") from exc
-            database.upsert_process(process)
-            imported += 1
-    return imported
+            key = (process.system, process.number)
+            if key in seen:
+                raise ValueError(
+                    f"Linha {line}: processo repetido (já aparece na linha {seen[key]})."
+                )
+            seen[key] = line
+            records.append(process)
+    return records
 
 
 def _collector_settings(config: dict, system: str) -> dict:
@@ -232,8 +251,31 @@ def _run(args: argparse.Namespace) -> int:
         return 0
     if args.command == "import-catalog":
         database.initialize()
-        count = _import_catalog(database, args.csv_file)
-        print(f"{count} registro(s) importado(s)/atualizado(s).")
+        records = _read_catalog(args.csv_file)
+        for process in records:
+            database.upsert_process(process)
+        print(f"{len(records)} registro(s) importado(s)/atualizado(s).")
+        listed = {(process.system, process.number) for process in records}
+        absent = [
+            process
+            for process in database.active_processes()
+            if (process.system, process.number) not in listed
+        ]
+        if absent:
+            labels = ", ".join(f"{display_system(p.system)} {p.number}" for p in absent)
+            if args.inativar_ausentes:
+                reason = f"Ausente do cadastro importado em {datetime.now(BRAZIL_TZ):%d/%m/%Y}."
+                for process in absent:
+                    database.upsert_process(
+                        replace(process, active=False, inactivation_reason=reason)
+                    )
+                print(f"{len(absent)} processo(s) ausente(s) do CSV inativado(s): {labels}.")
+            else:
+                print(
+                    f"Atenção: {len(absent)} processo(s) ativo(s) não estão no CSV e continuam "
+                    f"sendo monitorados: {labels}. Use --inativar-ausentes para inativá-los.",
+                    file=sys.stderr,
+                )
         return 0
     if args.command == "backup":
         database.initialize()
