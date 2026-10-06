@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta, timezone
 from enum import StrEnum
+from functools import lru_cache
 import hashlib
 import json
 import re
@@ -58,6 +59,92 @@ def local_date(value: str) -> date:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(BRAZIL_TZ).date()
+
+
+def easter(year: int) -> date:
+    """Domingo de Páscoa (algoritmo de Meeus/Jones/Butcher)."""
+    a = year % 19
+    b, c = divmod(year, 100)
+    d, e = divmod(b, 4)
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i, k = divmod(c, 4)
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    month, day = divmod(h + l - 7 * m + 114, 31)
+    return date(year, month, day + 1)
+
+
+@lru_cache(maxsize=64)
+def brazil_national_holidays(year: int) -> frozenset[date]:
+    """Feriados nacionais. Estaduais, municipais e pontos facultativos vêm do config."""
+    fixed = ((1, 1), (4, 21), (5, 1), (9, 7), (10, 12), (11, 2), (11, 15), (11, 20), (12, 25))
+    holidays = {date(year, month, day) for month, day in fixed}
+    holidays.add(easter(year) - timedelta(days=2))  # Sexta-feira Santa
+    return frozenset(holidays)
+
+
+@dataclass(frozen=True)
+class StagnationRule:
+    """Quando um processo sem movimentação passa a ser considerado parado."""
+
+    limit: int = 30
+    business_days: bool = False
+    holidays: frozenset[date] = field(default_factory=frozenset)
+
+    @classmethod
+    def from_config(cls, monitor: dict) -> StagnationRule:
+        kind = str(monitor.get("stagnant_day_kind", "uteis")).strip().casefold()
+        if kind not in {"uteis", "úteis", "corridos"}:
+            raise ValueError('stagnant_day_kind deve ser "uteis" ou "corridos".')
+        holidays = set()
+        for value in monitor.get("holidays", []):
+            try:
+                holidays.add(date.fromisoformat(str(value).strip()))
+            except ValueError as exc:
+                raise ValueError(f"Feriado inválido no config: {value!r} (use AAAA-MM-DD).") from exc
+        rule = cls(
+            limit=int(monitor.get("stagnant_after_days", 20)),
+            business_days=kind != "corridos",
+            holidays=frozenset(holidays),
+        )
+        rule.validate()
+        return rule
+
+    @classmethod
+    def coerce(cls, value: StagnationRule | int) -> StagnationRule:
+        """Um inteiro continua significando dias corridos."""
+        rule = value if isinstance(value, StagnationRule) else cls(limit=int(value))
+        rule.validate()
+        return rule
+
+    def validate(self) -> None:
+        if self.limit < 0:
+            raise ValueError("O limite de dias sem movimentação não pode ser negativo.")
+
+    @property
+    def unit(self) -> str:
+        return "dias úteis" if self.business_days else "dias"
+
+    def is_business_day(self, day: date) -> bool:
+        return (
+            day.weekday() < 5
+            and day not in self.holidays
+            and day not in brazil_national_holidays(day.year)
+        )
+
+    def days_between(self, start: date, end: date) -> int:
+        """Dias decorridos de start (exclusive) até end (inclusive)."""
+        if not self.business_days:
+            return (end - start).days
+        if end <= start:
+            return 0
+        return sum(
+            1
+            for offset in range(1, (end - start).days + 1)
+            if self.is_business_day(start + timedelta(days=offset))
+        )
 
 
 def normalized_text(value: str | None) -> str:

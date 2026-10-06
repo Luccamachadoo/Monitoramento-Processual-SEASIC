@@ -2,8 +2,13 @@
 path = "data/processos.sqlite"
 
 [monitor]
-# Dias corridos. Ajustar para dias úteis somente após decisão do Gabinete.
-stagnant_after_days = 30
+# Processo "parado": sem movimentação há N dias úteis (decisão do Gabinete).
+# Use stagnant_day_kind = "corridos" para contar dias corridos.
+stagnant_after_days = 20
+stagnant_day_kind = "uteis"
+# Feriados nacionais (inclusive Sexta-feira Santa) já são considerados. Acrescente
+# estaduais, municipais e pontos facultativos, em AAAA-MM-DD. Ex.: 8 de julho (Sergipe).
+holidays = []
 
 # Será usado pelos coletores reais somente após autorização institucional.
 min_interval_seconds = 5

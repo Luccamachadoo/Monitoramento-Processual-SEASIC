@@ -6,7 +6,7 @@ import io
 import json
 from zoneinfo import ZoneInfo
 
-from .domain import BRAZIL_TZ, display_system, parse_movement_date
+from .domain import BRAZIL_TZ, StagnationRule, display_system, parse_movement_date
 
 
 def _local_time(value: str | None) -> str:
@@ -170,8 +170,20 @@ def _stamp_lines(data: dict) -> list[str]:
     return lines
 
 
-def current_view_rows(data: dict, today: date | None = None) -> list[dict[str, str]]:
+def days_column(rule: StagnationRule | None) -> str:
+    if rule is not None and rule.business_days:
+        return "Dias úteis sem movimento"
+    return "Dias sem movimento"
+
+
+def current_view_rows(
+    data: dict,
+    today: date | None = None,
+    rule: StagnationRule | None = None,
+) -> list[dict[str, str]]:
     today = today or datetime.now(BRAZIL_TZ).date()
+    rule = rule or StagnationRule()
+    column = days_column(rule)
     rows = []
     for item in data["rows"]:
         process = item["process"]
@@ -185,9 +197,7 @@ def current_view_rows(data: dict, today: date | None = None) -> list[dict[str, s
             situation = f"Falha atual: {attempt['status']}"
         days = ""
         if valid:
-            days = str(
-                (today - parse_movement_date(valid["movement_date"])).days
-            )
+            days = str(rule.days_between(parse_movement_date(valid["movement_date"]), today))
         rows.append(
             {
                 "Sistema": display_system(process["system"]),
@@ -200,7 +210,7 @@ def current_view_rows(data: dict, today: date | None = None) -> list[dict[str, s
                     if valid
                     else ""
                 ),
-                "Dias sem movimento": days,
+                column: days,
                 "Andamento": valid["last_movement"] if valid else "",
                 "Situação da consulta": situation,
                 "Consultado em": _local_time(valid["collected_at"]) if valid else "",
@@ -214,11 +224,23 @@ def _md_cell(value: str) -> str:
     return " ".join(value.split()).replace("|", "\\|") or "—"
 
 
-def render_current_view(data: dict, fmt: str = "markdown", today: date | None = None) -> str:
-    rows = current_view_rows(data, today)
+def current_view_columns(rule: StagnationRule | None = None) -> tuple[str, ...]:
+    column = days_column(rule)
+    return tuple(column if name == "Dias sem movimento" else name for name in CURRENT_VIEW_COLUMNS)
+
+
+def render_current_view(
+    data: dict,
+    fmt: str = "markdown",
+    today: date | None = None,
+    rule: StagnationRule | None = None,
+) -> str:
+    rows = current_view_rows(data, today, rule)
     if fmt == "csv":
         buffer = io.StringIO()
-        writer = csv.DictWriter(buffer, fieldnames=CURRENT_VIEW_COLUMNS, lineterminator="\n")
+        writer = csv.DictWriter(
+            buffer, fieldnames=current_view_columns(rule), lineterminator="\n"
+        )
         writer.writeheader()
         writer.writerows(rows)
         return buffer.getvalue()
@@ -230,7 +252,7 @@ def render_current_view(data: dict, fmt: str = "markdown", today: date | None = 
         "Processo",
         "Unidade atual",
         "Último trâmite",
-        "Dias sem movimento",
+        days_column(rule),
         "Situação da consulta",
         "Nota",
     )

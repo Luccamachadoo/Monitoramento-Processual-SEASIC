@@ -13,6 +13,7 @@ from .domain import (
     ComparisonStatus,
     Observation,
     ProcessRecord,
+    StagnationRule,
     canonical_system,
     utc_now,
 )
@@ -332,10 +333,9 @@ class MonitorDatabase:
         self,
         run_id: int,
         observation: Observation,
-        stagnant_after_days: int,
+        stagnant_after_days: StagnationRule | int,
     ) -> dict[str, Any]:
-        if stagnant_after_days < 0:
-            raise ValueError("O limite de dias sem movimentação não pode ser negativo.")
+        stagnation = StagnationRule.coerce(stagnant_after_days)
 
         current = observation
         if current.status.value == "OK" and not current.is_valid:
@@ -432,7 +432,7 @@ class MonitorDatabase:
                     previous_valid,
                     current,
                     snapshot_id,
-                    stagnant_after_days,
+                    stagnation,
                 )
                 if valid
                 else []

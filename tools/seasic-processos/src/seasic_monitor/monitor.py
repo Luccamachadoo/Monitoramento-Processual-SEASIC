@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, time, timezone
 from pathlib import Path
 from typing import Any, Protocol
@@ -13,6 +13,7 @@ from .domain import (
     CollectionStatus,
     Observation,
     ProcessRecord,
+    StagnationRule,
     canonical_system,
     display_system,
 )
@@ -34,7 +35,7 @@ class Collector(Protocol):
 
 @dataclass(frozen=True)
 class RunPolicy:
-    stagnant_after_days: int = 30
+    stagnation: StagnationRule = field(default_factory=StagnationRule)
     min_interval_seconds: float = 5
     max_processes_per_run: int = 500
     max_processes_per_day: int = 500
@@ -47,7 +48,7 @@ class RunPolicy:
         monitor = config.get("monitor", {})
         collector = config.get("collectors", {}).get(canonical_system(system), {})
         return cls(
-            stagnant_after_days=int(monitor.get("stagnant_after_days", 30)),
+            stagnation=StagnationRule.from_config(monitor),
             min_interval_seconds=float(monitor.get("min_interval_seconds", 5)),
             max_processes_per_run=int(monitor.get("max_processes_per_run", 500)),
             max_processes_per_day=int(monitor.get("max_processes_per_day", 500)),
@@ -57,8 +58,7 @@ class RunPolicy:
         )
 
     def validate(self) -> None:
-        if self.stagnant_after_days < 0:
-            raise ValueError("O limite de dias sem movimentação não pode ser negativo.")
+        self.stagnation.validate()
         if self.min_interval_seconds < 0:
             raise ValueError("O intervalo mínimo não pode ser negativo.")
         if self.max_processes_per_run < 1:
@@ -170,7 +170,9 @@ async def consult_one(
         await collector.close()
 
 
-def run_demo(database: MonitorDatabase, stagnant_after_days: int = 30) -> int:
+def run_demo(
+    database: MonitorDatabase, stagnant_after_days: StagnationRule | int = 30
+) -> int:
     database.initialize()
     processes = database.demo_processes()
     now = datetime.now(timezone.utc)
@@ -286,7 +288,7 @@ async def run_collection(
                     result = database.record_observation(
                         run_id,
                         observation,
-                        policy.stagnant_after_days,
+                        policy.stagnation,
                     )
                     if result["valid"]:
                         succeeded += 1

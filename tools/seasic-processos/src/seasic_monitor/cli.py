@@ -11,7 +11,7 @@ import tomllib
 
 from .collectors import LiveCollectionDisabled
 from .database import MonitorDatabase
-from .domain import ProcessRecord, canonical_system
+from .domain import ProcessRecord, StagnationRule, canonical_system
 from .monitor import RunPolicy, consult_one, prepare_session, run_collection, run_demo
 from .reporting import (
     render_current_view,
@@ -156,7 +156,7 @@ def _collector_settings(config: dict, system: str) -> dict:
 def _run(args: argparse.Namespace) -> int:
     config, config_dir = _load_config(args.config)
     database = MonitorDatabase(_database_path(args, config, config_dir))
-    stagnant_after_days = int(config.get("monitor", {}).get("stagnant_after_days", 30))
+    stagnation = StagnationRule.from_config(config.get("monitor", {}))
 
     if args.command == "init":
         database.initialize()
@@ -167,7 +167,7 @@ def _run(args: argparse.Namespace) -> int:
         if args.database is None and os.environ.get("SEASIC_MONITOR_DB") is None:
             demo_path = config_dir / "data" / "demo.sqlite"
             database = MonitorDatabase(demo_path)
-        run_id = run_demo(database, stagnant_after_days)
+        run_id = run_demo(database, stagnation)
         print(f"Execução sintética {run_id} gravada em: {database.path}")
         print(render_markdown(database.run_report(run_id)))
         return 0
@@ -188,7 +188,7 @@ def _run(args: argparse.Namespace) -> int:
             print(render_markdown(report_data))
         return 0
     if args.command == "visao":
-        text = render_current_view(database.current_view(), args.format)
+        text = render_current_view(database.current_view(), args.format, rule=stagnation)
         if args.saida:
             args.saida.parent.mkdir(parents=True, exist_ok=True)
             # utf-8-sig para o Excel reconhecer acentos ao abrir o CSV.
