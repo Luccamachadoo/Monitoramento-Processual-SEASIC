@@ -11,6 +11,7 @@ import tomllib
 
 from .collectors import LiveCollectionDisabled
 from .database import MonitorDatabase
+from .logs import LogSettings, configure_logging
 from .domain import ProcessRecord, StagnationRule, canonical_system
 from .monitor import RunPolicy, consult_one, prepare_session, run_collection, run_demo
 from .reporting import (
@@ -20,6 +21,7 @@ from .reporting import (
     render_markdown,
     render_status,
 )
+from .rotina import render_routine, run_routine
 from .sheets import GspreadWriter, SheetsPublishError, SheetsSettings, publish
 
 
@@ -53,6 +55,10 @@ def _parser() -> argparse.ArgumentParser:
     )
     view.add_argument("--format", choices=("markdown", "csv"), default="markdown")
     view.add_argument("--saida", type=Path, help="Grava em arquivo em vez de imprimir.")
+    commands.add_parser(
+        "rotina",
+        help="Rotina diária: coleta, resumo e visão em arquivo, planilha, backup e limpeza de logs.",
+    )
     commands.add_parser(
         "planilha",
         help="Publica a visão atual na aba do robô no Google Sheets (exige [sheets] configurado).",
@@ -182,6 +188,12 @@ def _run(args: argparse.Namespace) -> int:
         args.command, args.sistema = "run", "EDOC"
     if args.command not in {"run", "login", "consultar"}:
         database.initialize()
+    if args.command in {"run", "rotina", "planilha", "consultar"}:
+        configure_logging(LogSettings.from_config(config, config_dir))
+    if args.command == "rotina":
+        results = run_routine(database, config, config_dir, stagnation)
+        print(render_routine(results), end="")
+        return 0 if all(result.ok for result in results) else 1
     if args.command == "status":
         print(render_status(database.run_report()))
         return 0

@@ -55,6 +55,7 @@ Thumbs.db
 /tools/seasic-processos/data/
 /tools/seasic-processos/browser_profiles/
 /tools/seasic-processos/credentials/
+/tools/seasic-processos/logs/
 **/*service-account*.json
 /tools/seasic-processos/**/*.sqlite
 /tools/seasic-processos/**/*.sqlite-shm

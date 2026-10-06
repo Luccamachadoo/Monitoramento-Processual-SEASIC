@@ -20,6 +20,20 @@ max_consecutive_failures = 3
 # Janela permitida, horário de Brasília, ex.: "05:00-08:00". Vazio = sem restrição.
 allowed_hours = ""
 
+[rotina]
+# Comando rotina (Agendador de Tarefas): resumo e visão são gravados aqui, em pasta restrita.
+reports_dir = "data/relatorios"
+# true: o resumo gravado em arquivo conta como comunicado e não se repete no dia seguinte.
+mark_communicated = true
+backup_dir = "data/backup"
+# Quantos backups diários manter (os mais antigos são apagados). Copie-os também para fora da máquina.
+backup_keep = 30
+
+[logs]
+# Log técnico: só identificador do processo, resultado e código de erro.
+dir = "logs"
+retention_days = 180
+
 [sheets]
 # Publicação da visão atual no Google Sheets (comando planilha). Ver docs/operacao.md.
 enabled = false

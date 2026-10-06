@@ -8,6 +8,7 @@ from typing import Any, Protocol
 
 from .collectors import DemoCollector, LiveCollectionDisabled
 from .database import MonitorDatabase
+from .logs import logger
 from .domain import (
     BRAZIL_TZ,
     CollectionStatus,
@@ -264,6 +265,7 @@ async def run_collection(
     processes = _ordered_with_canary(processes, policy.canary)
 
     run_id = database.create_execution(mode=f"LIVE_{system}", scope=system)
+    logger.info("execucao=%s sistema=%s inicio planejados=%s", run_id, system, len(processes))
     succeeded = 0
     failed = 0
     consecutive_failures = 0
@@ -289,6 +291,18 @@ async def run_collection(
                         run_id,
                         observation,
                         policy.stagnation,
+                    )
+                    # Só identificador, resultado e código de erro (seção 9).
+                    logger.info(
+                        "execucao=%s processo=%s:%s status=%s comparacao=%s erro=%s "
+                        "ocorrencias=%s",
+                        run_id,
+                        system,
+                        process.number,
+                        result["status"],
+                        result["comparison_status"],
+                        observation.error_code or "-",
+                        result["occurrences_added"],
                     )
                     if result["valid"]:
                         succeeded += 1
@@ -334,6 +348,15 @@ async def run_collection(
             failed=failed,
             notes=notes,
             planned=len(processes),
+        )
+        logger.info(
+            "execucao=%s sistema=%s fim exito=%s falhas=%s planejados=%s obs=%s",
+            run_id,
+            system,
+            succeeded,
+            failed,
+            len(processes),
+            notes or "-",
         )
     return run_id
 
