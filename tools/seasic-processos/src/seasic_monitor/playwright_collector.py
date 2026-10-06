@@ -13,6 +13,7 @@ from .domain import (
     Observation,
     ProcessRecord,
     canonical_system,
+    number_matches,
     parse_movement_date,
     utc_now,
 )
@@ -205,6 +206,7 @@ class PlaywrightCollector:
             raise ValueError("O coletor não corresponde ao sistema do processo.")
 
         selectors = self.config.selectors
+        display_number = ""
         try:
             if await self._is_visible(selectors.get("session_expired", "")):
                 return self._failed(
@@ -273,7 +275,6 @@ class PlaywrightCollector:
                         "A busca retornou conteúdo, mas não a linha do processo esperado.",
                     )
                 rows = []
-                expected_number = " ".join(process.number.split()).casefold()
                 for index in range(candidate_count):
                     candidate = candidates.nth(index)
                     number_cell = candidate.locator(
@@ -281,15 +282,15 @@ class PlaywrightCollector:
                     )
                     actual_number = " ".join(
                         (await number_cell.inner_text()).split()
-                    ).casefold()
-                    if actual_number == expected_number:
-                        rows.append(candidate)
+                    )
+                    if number_matches(process.number, actual_number):
+                        rows.append((candidate, actual_number))
                 if not rows:
                     return self._failed(
                         process,
                         CollectionStatus.EXTRACTION_ERROR,
                         "NUMERO_RESULTADO_DIVERGENTE",
-                        "A busca não retornou uma linha com número exatamente igual ao consultado.",
+                        "A busca não retornou uma linha com o número consultado.",
                     )
                 if len(rows) != 1:
                     return self._failed(
@@ -298,7 +299,8 @@ class PlaywrightCollector:
                         "RESULTADO_AMBIGUO",
                         "A busca retornou mais de uma linha correspondente ao processo.",
                     )
-                await rows[0].locator(selectors["detail_link"]).click()
+                display_number = rows[0][1]
+                await rows[0][0].locator(selectors["detail_link"]).click()
                 try:
                     await self._page.locator(selectors["detail_ready"]).wait_for(
                         state="visible",
@@ -337,6 +339,7 @@ class PlaywrightCollector:
                 executive_sector=units[0] if units else "",
                 last_movement=last_movement,
                 movement_date=movement_date,
+                display_number=display_number,
             )
             if not observation.is_valid:
                 return self._failed(

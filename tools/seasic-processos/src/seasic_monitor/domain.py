@@ -73,6 +73,25 @@ def normalized_units(units: tuple[str, ...] | list[str]) -> tuple[str, ...]:
     return tuple(by_key[key] for key in sorted(by_key))
 
 
+_SHORT_NUMBER = re.compile(r"\d+/\d{4}")
+
+
+def number_matches(registered: str, displayed: str) -> bool:
+    """Diz se o número exibido pelo sistema corresponde ao número cadastrado.
+
+    O e-DOC exibe números com sufixo de classificação (ex.: 2439/2026-COMPR-SEASIC).
+    Aceita igualdade exata ou, quando o cadastro traz só NNNN/AAAA, esse prefixo
+    seguido de hífen. Nunca aceita prefixo parcial como 243/2026 para 2439/2026.
+    """
+    expected = " ".join(registered.split()).casefold()
+    actual = " ".join(displayed.split()).casefold()
+    if not expected or not actual:
+        return False
+    if actual == expected:
+        return True
+    return bool(_SHORT_NUMBER.fullmatch(expected)) and actual.startswith(expected + "-")
+
+
 @dataclass(frozen=True)
 class ProcessRecord:
     system: str
@@ -102,10 +121,12 @@ class Observation:
     movement_date: str = ""
     error_code: str = ""
     error_message: str = ""
+    display_number: str = ""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "system", canonical_system(self.system))
         object.__setattr__(self, "number", self.number.strip())
+        object.__setattr__(self, "display_number", " ".join(self.display_number.split()))
         object.__setattr__(self, "units", normalized_units(self.units))
         if not self.number:
             raise ValueError("O número do processo é obrigatório.")

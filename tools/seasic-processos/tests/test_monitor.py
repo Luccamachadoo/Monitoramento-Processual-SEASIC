@@ -1,17 +1,19 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sqlite3
 import tempfile
 import unittest
 import asyncio
 
 from seasic_monitor.collectors import LiveCollectionDisabled
-from seasic_monitor.database import MonitorDatabase
+from seasic_monitor.database import SCHEMA as LEGACY_SCHEMA, MonitorDatabase
 from seasic_monitor.domain import (
     CollectionStatus,
     Observation,
     ProcessRecord,
     local_date,
+    number_matches,
 )
 from seasic_monitor.playwright_collector import (
     PlaywrightCollector,
@@ -266,6 +268,41 @@ class MonitorDatabaseTests(unittest.TestCase):
             )
         )
         self.assertEqual(result["occurrences_added"], 0)  # 29 dias, abaixo de 30
+
+    def test_edoc_number_with_suffix_matches_registered_short_number(self) -> None:
+        self.assertTrue(number_matches("2439/2026", "2439/2026-COMPR-SEASIC"))
+        self.assertTrue(number_matches("2439/2026-COMPR-SEASIC", " 2439/2026-compr-seasic "))
+        self.assertFalse(number_matches("439/2026", "2439/2026-COMPR-SEASIC"))
+        self.assertFalse(number_matches("2439/2026", "2439/20261"))
+        self.assertFalse(number_matches("2439/2026-COMPR", "2439/2026-COMPR-SEASIC"))
+        self.assertFalse(number_matches("2439/2026", ""))
+
+    def test_display_number_is_stored_and_old_databases_are_migrated(self) -> None:
+        legacy = Path(self.temp_dir.name) / "legacy.sqlite"
+        connection = sqlite3.connect(legacy)
+        connection.executescript(LEGACY_SCHEMA)  # esquema sem display_number
+        connection.close()
+        MonitorDatabase(legacy).initialize()
+        connection = sqlite3.connect(legacy)
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(snapshots)")}
+        connection.close()
+        self.assertIn("display_number", columns)
+
+        result = self.add_snapshot(
+            Observation(
+                system="SEI",
+                number="100/2026",
+                collected_at="2026-10-06T09:00:00+00:00",
+                status=CollectionStatus.OK,
+                units=("GABINETE",),
+                last_movement="Recebido",
+                movement_date="2026-10-06",
+                display_number="100/2026-COMPR-SEASIC",
+            )
+        )
+        history = self.database.process_history("SEI", "100/2026")
+        self.assertEqual(history["snapshots"][0]["id"], result["snapshot_id"])
+        self.assertEqual(history["snapshots"][0]["display_number"], "100/2026-COMPR-SEASIC")
 
 
 if __name__ == "__main__":

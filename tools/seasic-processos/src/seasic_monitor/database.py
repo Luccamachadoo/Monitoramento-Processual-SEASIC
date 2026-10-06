@@ -120,11 +120,24 @@ class MonitorDatabase:
     def initialize(self) -> None:
         with self._connection() as connection:
             connection.executescript(SCHEMA)
+            self._migrate(connection)
         if str(self.path) != ":memory:" and self.path.exists():
             try:
                 os.chmod(self.path, 0o600)
             except OSError:
                 pass
+
+    @staticmethod
+    def _migrate(connection: sqlite3.Connection) -> None:
+        """Acrescenta colunas novas em bancos criados por versões anteriores."""
+        columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(snapshots)").fetchall()
+        }
+        if "display_number" not in columns:
+            connection.execute(
+                "ALTER TABLE snapshots ADD COLUMN display_number TEXT NOT NULL DEFAULT ''"
+            )
 
     def upsert_process(self, process: ProcessRecord) -> None:
         with self._connection() as connection:
@@ -357,8 +370,9 @@ class MonitorDatabase:
                 INSERT INTO snapshots (
                     run_id, system, number, collected_at, status, units_json,
                     executive_sector, last_movement, movement_date, content_hash,
-                    valid, comparison_status, error_code, error_message
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    valid, comparison_status, error_code, error_message,
+                    display_number
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_id,
@@ -375,6 +389,7 @@ class MonitorDatabase:
                     comparison.value,
                     current.error_code[:100],
                     error_message,
+                    current.display_number[:200],
                 ),
             )
             snapshot_id = int(cursor.lastrowid)
