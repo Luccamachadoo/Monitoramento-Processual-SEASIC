@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import csv
+from dataclasses import asdict
 import os
 from pathlib import Path
 import sys
@@ -10,8 +11,8 @@ import tomllib
 
 from .collectors import LiveCollectionDisabled
 from .database import MonitorDatabase
-from .domain import ProcessRecord
-from .monitor import prepare_edoc_session, run_demo, run_edoc
+from .domain import ProcessRecord, canonical_system
+from .monitor import RunPolicy, consult_one, prepare_session, run_collection, run_demo
 from .reporting import render_json, render_markdown, render_status
 
 
@@ -47,18 +48,24 @@ def _parser() -> argparse.ArgumentParser:
     catalog.add_argument("csv_file", type=Path)
     backup = commands.add_parser("backup", help="Cria uma cópia SQLite consistente.")
     backup.add_argument("destination", type=Path)
-    commands.add_parser(
+    login = commands.add_parser(
+        "login",
+        help="Abre o perfil local do sistema para autenticação manual pelo operador.",
+    )
+    login.add_argument("--sistema", required=True, help="SEI ou e-DOC")
+    run = commands.add_parser(
         "run",
-        help="Consulta genérica bloqueada; configure o coletor e-DOC para usar run-edoc.",
+        help="Consulta em série os processos ativos de um sistema (exige configuração institucional).",
     )
-    commands.add_parser(
-        "login-edoc",
-        help="Abre o perfil local do e-DOC para autenticação manual pelo operador.",
+    run.add_argument("--sistema", required=True, help="SEI ou e-DOC")
+    consult = commands.add_parser(
+        "consultar",
+        help="Consulta um único processo e mostra o resultado, sem gravar no banco.",
     )
-    commands.add_parser(
-        "run-edoc",
-        help="Consulta processos e-DOC ativos em série (exige configuração institucional).",
-    )
+    consult.add_argument("system", help="SEI ou e-DOC")
+    consult.add_argument("number", help="Número do processo")
+    commands.add_parser("login-edoc", help="Atalho para: login --sistema e-DOC.")
+    commands.add_parser("run-edoc", help="Atalho para: run --sistema e-DOC.")
     return parser
 
 
@@ -123,6 +130,10 @@ def _import_catalog(database: MonitorDatabase, csv_path: Path) -> int:
     return imported
 
 
+def _collector_settings(config: dict, system: str) -> dict:
+    return config.get("collectors", {}).get(system, {})
+
+
 def _run(args: argparse.Namespace) -> int:
     config, config_dir = _load_config(args.config)
     database = MonitorDatabase(_database_path(args, config, config_dir))
@@ -141,7 +152,11 @@ def _run(args: argparse.Namespace) -> int:
         print(f"Execução sintética {run_id} gravada em: {database.path}")
         print(render_markdown(database.run_report(run_id)))
         return 0
-    if args.command not in {"run", "run-edoc", "login-edoc"}:
+    if args.command == "login-edoc":
+        args.command, args.sistema = "login", "EDOC"
+    if args.command == "run-edoc":
+        args.command, args.sistema = "run", "EDOC"
+    if args.command not in {"run", "login", "consultar"}:
         database.initialize()
     if args.command == "status":
         print(render_status(database.run_report()))
@@ -166,17 +181,15 @@ def _run(args: argparse.Namespace) -> int:
         backup_path = database.backup(args.destination)
         print(f"Backup SQLite criado em: {backup_path}")
         return 0
-    if args.command == "login-edoc":
+    if args.command == "login":
+        system = canonical_system(args.sistema)
         logged_in = asyncio.run(
-            prepare_edoc_session(
-                config.get("collectors", {}).get("EDOC", {}),
-                config_dir,
-            )
+            prepare_session(system, _collector_settings(config, system), config_dir)
         )
         if logged_in:
             print(
                 "Login manual concluído; perfil local salvo. "
-                "run-edoc ainda valida seletores e autorização antes de consultar."
+                "run ainda valida seletores e autorização antes de consultar."
             )
         else:
             print(
@@ -184,30 +197,33 @@ def _run(args: argparse.Namespace) -> int:
                 "foi solicitada."
             )
         return 0
-    if args.command == "run-edoc":
-        run_id = asyncio.run(
-            run_edoc(
-                database=database,
-                collector_settings=config.get("collectors", {}).get("EDOC", {}),
-                config_dir=config_dir,
-                stagnant_after_days=stagnant_after_days,
-                min_interval_seconds=float(
-                    config.get("monitor", {}).get("min_interval_seconds", 5)
-                ),
-                max_processes_per_run=int(
-                    config.get("monitor", {}).get("max_processes_per_run", 500)
-                ),
+    if args.command == "consultar":
+        system = canonical_system(args.system)
+        observation = asyncio.run(
+            consult_one(
+                system,
+                args.number,
+                _collector_settings(config, system),
+                config_dir,
             )
         )
-        print(f"Execução e-DOC {run_id} gravada em: {database.path}")
+        print(render_json({**asdict(observation), "valid": observation.is_valid}))
+        print("Consulta avulsa: nada foi gravado no banco.", file=sys.stderr)
+        return 0 if observation.is_valid else 1
+    if args.command == "run":
+        system = canonical_system(args.sistema)
+        run_id = asyncio.run(
+            run_collection(
+                database,
+                system,
+                _collector_settings(config, system),
+                config_dir,
+                RunPolicy.from_config(config, system),
+            )
+        )
+        print(f"Execução {args.sistema} {run_id} gravada em: {database.path}")
         print(render_markdown(database.run_report(run_id)))
         return 0
-    if args.command == "run":
-        raise LiveCollectionDisabled(
-            "A consulta real não está habilitada nesta entrega. "
-            "É necessário implementar e validar os coletores SEI/e-DOC em ambiente "
-            "institucional autorizado; nenhum controle de acesso será contornado."
-        )
     raise ValueError(f"Comando não reconhecido: {args.command}")
 
 

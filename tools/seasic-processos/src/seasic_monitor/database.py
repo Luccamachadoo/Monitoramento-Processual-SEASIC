@@ -138,6 +138,15 @@ class MonitorDatabase:
             connection.execute(
                 "ALTER TABLE snapshots ADD COLUMN display_number TEXT NOT NULL DEFAULT ''"
             )
+        execution_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(executions)").fetchall()
+        }
+        if "scope" not in execution_columns:
+            # Sistema consultado pela execução; vazio = todos os sistemas.
+            connection.execute(
+                "ALTER TABLE executions ADD COLUMN scope TEXT NOT NULL DEFAULT ''"
+            )
 
     def upsert_process(self, process: ProcessRecord) -> None:
         with self._connection() as connection:
@@ -198,7 +207,12 @@ class MonitorDatabase:
         with self._connection() as connection:
             return int(connection.execute(query).fetchone()[0])
 
-    def create_execution(self, mode: str, started_at: str | None = None) -> int:
+    def create_execution(
+        self,
+        mode: str,
+        started_at: str | None = None,
+        scope: str = "",
+    ) -> int:
         with self._connection() as connection:
             # A rotina é serial: qualquer execução ainda aberta foi interrompida
             # (queda, Ctrl+C) e não pode continuar parecendo em andamento.
@@ -224,10 +238,10 @@ class MonitorDatabase:
             )
             cursor = connection.execute(
                 """
-                INSERT INTO executions (started_at, mode, status)
-                VALUES (?, ?, 'EM_ANDAMENTO')
+                INSERT INTO executions (started_at, mode, status, scope)
+                VALUES (?, ?, 'EM_ANDAMENTO', ?)
                 """,
-                (started_at or utc_now(), mode),
+                (started_at or utc_now(), mode, canonical_system(scope) if scope else ""),
             )
             return int(cursor.lastrowid)
 
@@ -239,12 +253,19 @@ class MonitorDatabase:
         failed: int,
         notes: str = "",
         finished_at: str | None = None,
+        planned: int | None = None,
     ) -> None:
         if succeeded + failed != total:
             raise ValueError("O total deve ser igual a sucessos mais falhas.")
-        status = "FALHOU" if total > 0 and succeeded == 0 else (
-            "PARCIAL" if failed or notes else "OK"
-        )
+        planned = total if planned is None else planned
+        if planned < total:
+            raise ValueError("O total consultado não pode superar o planejado.")
+        if planned > 0 and succeeded == 0:
+            status = "FALHOU"
+        elif failed or notes or total < planned:
+            status = "PARCIAL"
+        else:
+            status = "OK"
         with self._connection() as connection:
             cursor = connection.execute(
                 """
@@ -265,6 +286,19 @@ class MonitorDatabase:
             )
             if cursor.rowcount != 1:
                 raise ValueError(f"Execução {run_id} não encontrada ou já finalizada.")
+
+    def count_snapshots_since(self, system: str, since_utc: str) -> int:
+        """Consultas já feitas a um sistema desde o instante informado (UTC ISO)."""
+        with self._connection() as connection:
+            return int(
+                connection.execute(
+                    """
+                    SELECT COUNT(*) FROM snapshots
+                    WHERE system = ? AND collected_at >= ?
+                    """,
+                    (canonical_system(system), since_utc),
+                ).fetchone()[0]
+            )
 
     def latest_valid_snapshot(self, system: str, number: str) -> dict[str, Any] | None:
         system = canonical_system(system)
@@ -463,9 +497,12 @@ class MonitorDatabase:
                 "SELECT * FROM occurrences WHERE run_id = ? ORDER BY detected_at, id",
                 (selected_run["id"],),
             ).fetchall()
+            scope = selected_run["scope"]
             active_count = int(
                 connection.execute(
                     "SELECT COUNT(*) FROM processes WHERE active = 1"
+                    + (" AND system = ?" if scope else ""),
+                    (scope,) if scope else (),
                 ).fetchone()[0]
             )
             last_successful = connection.execute(

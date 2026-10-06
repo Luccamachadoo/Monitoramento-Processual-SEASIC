@@ -13,6 +13,7 @@ from .domain import (
     Observation,
     ProcessRecord,
     canonical_system,
+    display_system,
     number_matches,
     parse_movement_date,
     utc_now,
@@ -179,12 +180,13 @@ class PlaywrightCollector:
 
         if not sys.stdin.isatty():
             raise LiveCollectionDisabled(
-                "A sessão precisa de login manual. Execute login-edoc localmente "
-                "em um terminal interativo."
+                "A sessão precisa de login manual. Execute o comando login "
+                "localmente em um terminal interativo."
             )
         await asyncio.to_thread(
             input,
-            "Conclua o login manualmente na janela oficial do e-DOC e pressione Enter. "
+            f"Conclua o login manualmente na janela oficial do "
+            f"{display_system(self.config.system)} e pressione Enter. "
             "Não cole credenciais neste terminal.\n",
         )
         await self._page.goto(

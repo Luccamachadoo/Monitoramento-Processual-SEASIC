@@ -8,11 +8,20 @@ stagnant_after_days = 30
 # Será usado pelos coletores reais somente após autorização institucional.
 min_interval_seconds = 5
 max_processes_per_run = 500
+# Teto por sistema somando todas as execuções do dia (horário de Brasília).
+max_processes_per_day = 500
+# Falhas técnicas seguidas (erro de extração, sistema indisponível) que interrompem a rodada.
+max_consecutive_failures = 3
+# Janela permitida, horário de Brasília, ex.: "05:00-08:00". Vazio = sem restrição.
+allowed_hours = ""
 
 [collectors.SEI]
 enabled = false
 entry_url = ""
 profile_path = "browser_profiles/sei"
+# Processo de referência consultado primeiro; se falhar, a rodada para (layout mudou).
+# Precisa estar ativo no Cadastro Mestre. Vazio = sem processo de referência.
+canary = ""
 
 [collectors.SEI.selectors]
 process_input = ""
@@ -32,6 +41,9 @@ session_expired = ""
 enabled = false
 entry_url = ""
 profile_path = "browser_profiles/edoc"
+# Processo de referência consultado primeiro; se falhar, a rodada para (layout mudou).
+# Precisa estar ativo no Cadastro Mestre. Vazio = sem processo de referência.
+canary = ""
 
 [collectors.EDOC.selectors]
 process_input = ""

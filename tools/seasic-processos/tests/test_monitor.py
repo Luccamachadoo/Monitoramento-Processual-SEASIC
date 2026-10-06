@@ -20,7 +20,7 @@ from seasic_monitor.playwright_collector import (
     PlaywrightCollectorConfig,
     _normalize_movement_date,
 )
-from seasic_monitor.monitor import prepare_edoc_session, run_edoc
+from seasic_monitor.monitor import RunPolicy, prepare_session, run_collection
 from seasic_monitor.reporting import render_markdown
 
 
@@ -224,13 +224,12 @@ class MonitorDatabaseTests(unittest.TestCase):
         )
         with self.assertRaises(LiveCollectionDisabled):
             asyncio.run(
-                run_edoc(
-                    database=self.database,
-                    collector_settings={"enabled": False},
-                    config_dir=self.temp_dir.name,
-                    stagnant_after_days=30,
-                    min_interval_seconds=5,
-                    max_processes_per_run=500,
+                run_collection(
+                    self.database,
+                    "EDOC",
+                    {"enabled": False},
+                    self.temp_dir.name,
+                    RunPolicy(),
                 )
             )
         self.assertIsNone(self.database.run_report())
@@ -247,7 +246,7 @@ class MonitorDatabaseTests(unittest.TestCase):
         # Sem Playwright instalado, start() falha; a falha deve virar
         # LiveCollectionDisabled (mensagem ao operador), nunca NameError.
         with self.assertRaises(LiveCollectionDisabled):
-            asyncio.run(prepare_edoc_session(settings, self.temp_dir.name))
+            asyncio.run(prepare_session("EDOC", settings, self.temp_dir.name))
 
     def test_interrupted_execution_is_closed_on_next_run(self) -> None:
         orphan = self.database.create_execution(mode="TESTE")
