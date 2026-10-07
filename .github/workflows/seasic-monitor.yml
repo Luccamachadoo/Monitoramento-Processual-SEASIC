@@ -1,0 +1,60 @@
+name: Monitor SEASIC (Python)
+
+on:
+  push:
+    paths:
+      - "tools/seasic-processos/**"
+      - ".github/workflows/seasic-monitor.yml"
+  pull_request:
+    paths:
+      - "tools/seasic-processos/**"
+      - ".github/workflows/seasic-monitor.yml"
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    # "shell: bash" liga pipefail: o código de saída dos testes não se perde no tee.
+    shell: bash
+    working-directory: tools/seasic-processos
+
+jobs:
+  nucleo:
+    name: Núcleo (só biblioteca padrão)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Testes
+        env:
+          PYTHONPATH: src
+        run: python -m unittest discover -s tests -v
+
+  extras:
+    name: Com navegador e Google Sheets (páginas sintéticas, sem rede externa)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Instalar extras
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[browser,sheets]"
+          python -m playwright install --with-deps chromium
+      - name: Testes (nenhum é pulado)
+        env:
+          PYTHONPATH: src
+        run: |
+          python -m unittest discover -s tests -v 2>&1 | tee resultado.txt
+          if grep -q "skipped" resultado.txt; then
+            echo "Algum teste foi pulado mesmo com os extras instalados." >&2
+            exit 1
+          fi

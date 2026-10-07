@@ -1,0 +1,15 @@
+<html><body>
+<input id="numero"><button id="pesquisar" onclick="buscar()">Pesquisar</button>
+<div id="vazio" style="display:none">Nenhum registro</div>
+<table id="res" style="display:none"><tbody>
+<tr><td class="num">2439/2026-COMPR-SEASIC</td><td><a class="det" href="edoc_det_2439.html">ver</a></td></tr>
+<tr><td class="num">12439/2026-COMPR-SEASIC</td><td><a class="det" href="#">ver</a></td></tr>
+<tr><td class="num">3300/2026-CRED-SEASIC</td><td><a class="det" href="#">ver</a></td></tr>
+<tr><td class="num">3300/2026-OUTRO-SEASIC</td><td><a class="det" href="#">ver</a></td></tr>
+</tbody></table>
+<script>
+function buscar(){const n=document.getElementById('numero').value;
+ if(n.startsWith('9999')){document.getElementById('vazio').style.display='block';return;}
+ const t=document.getElementById('res');t.style.display='table';
+ for(const r of t.querySelectorAll('tr')){r.style.display=r.innerText.includes(n)?'':'none';}}
+</script></body></html>

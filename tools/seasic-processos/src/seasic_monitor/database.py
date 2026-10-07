@@ -13,6 +13,7 @@ from .domain import (
     ComparisonStatus,
     Observation,
     ProcessRecord,
+    StagnationRule,
     canonical_system,
     utc_now,
 )
@@ -120,11 +121,33 @@ class MonitorDatabase:
     def initialize(self) -> None:
         with self._connection() as connection:
             connection.executescript(SCHEMA)
+            self._migrate(connection)
         if str(self.path) != ":memory:" and self.path.exists():
             try:
                 os.chmod(self.path, 0o600)
             except OSError:
                 pass
+
+    @staticmethod
+    def _migrate(connection: sqlite3.Connection) -> None:
+        """Acrescenta colunas novas em bancos criados por versões anteriores."""
+        columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(snapshots)").fetchall()
+        }
+        if "display_number" not in columns:
+            connection.execute(
+                "ALTER TABLE snapshots ADD COLUMN display_number TEXT NOT NULL DEFAULT ''"
+            )
+        execution_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(executions)").fetchall()
+        }
+        if "scope" not in execution_columns:
+            # Sistema consultado pela execução; vazio = todos os sistemas.
+            connection.execute(
+                "ALTER TABLE executions ADD COLUMN scope TEXT NOT NULL DEFAULT ''"
+            )
 
     def upsert_process(self, process: ProcessRecord) -> None:
         with self._connection() as connection:
@@ -185,14 +208,41 @@ class MonitorDatabase:
         with self._connection() as connection:
             return int(connection.execute(query).fetchone()[0])
 
-    def create_execution(self, mode: str, started_at: str | None = None) -> int:
+    def create_execution(
+        self,
+        mode: str,
+        started_at: str | None = None,
+        scope: str = "",
+    ) -> int:
         with self._connection() as connection:
+            # A rotina é serial: qualquer execução ainda aberta foi interrompida
+            # (queda, Ctrl+C) e não pode continuar parecendo em andamento.
+            connection.execute(
+                """
+                UPDATE executions
+                SET finished_at = ?, status = 'FALHOU',
+                    succeeded = (
+                        SELECT COUNT(*) FROM snapshots
+                        WHERE run_id = executions.id AND valid = 1
+                    ),
+                    failed = (
+                        SELECT COUNT(*) FROM snapshots
+                        WHERE run_id = executions.id AND valid = 0
+                    ),
+                    total_processes = (
+                        SELECT COUNT(*) FROM snapshots WHERE run_id = executions.id
+                    ),
+                    notes = 'Execução interrompida antes de ser finalizada.'
+                WHERE status = 'EM_ANDAMENTO'
+                """,
+                (utc_now(),),
+            )
             cursor = connection.execute(
                 """
-                INSERT INTO executions (started_at, mode, status)
-                VALUES (?, ?, 'EM_ANDAMENTO')
+                INSERT INTO executions (started_at, mode, status, scope)
+                VALUES (?, ?, 'EM_ANDAMENTO', ?)
                 """,
-                (started_at or utc_now(), mode),
+                (started_at or utc_now(), mode, canonical_system(scope) if scope else ""),
             )
             return int(cursor.lastrowid)
 
@@ -204,12 +254,19 @@ class MonitorDatabase:
         failed: int,
         notes: str = "",
         finished_at: str | None = None,
+        planned: int | None = None,
     ) -> None:
         if succeeded + failed != total:
             raise ValueError("O total deve ser igual a sucessos mais falhas.")
-        status = "FALHOU" if total > 0 and succeeded == 0 else (
-            "PARCIAL" if failed or notes else "OK"
-        )
+        planned = total if planned is None else planned
+        if planned < total:
+            raise ValueError("O total consultado não pode superar o planejado.")
+        if planned > 0 and succeeded == 0:
+            status = "FALHOU"
+        elif failed or notes or total < planned:
+            status = "PARCIAL"
+        else:
+            status = "OK"
         with self._connection() as connection:
             cursor = connection.execute(
                 """
@@ -230,6 +287,19 @@ class MonitorDatabase:
             )
             if cursor.rowcount != 1:
                 raise ValueError(f"Execução {run_id} não encontrada ou já finalizada.")
+
+    def count_snapshots_since(self, system: str, since_utc: str) -> int:
+        """Consultas já feitas a um sistema desde o instante informado (UTC ISO)."""
+        with self._connection() as connection:
+            return int(
+                connection.execute(
+                    """
+                    SELECT COUNT(*) FROM snapshots
+                    WHERE system = ? AND collected_at >= ?
+                    """,
+                    (canonical_system(system), since_utc),
+                ).fetchone()[0]
+            )
 
     def latest_valid_snapshot(self, system: str, number: str) -> dict[str, Any] | None:
         system = canonical_system(system)
@@ -263,10 +333,9 @@ class MonitorDatabase:
         self,
         run_id: int,
         observation: Observation,
-        stagnant_after_days: int,
+        stagnant_after_days: StagnationRule | int,
     ) -> dict[str, Any]:
-        if stagnant_after_days < 0:
-            raise ValueError("O limite de dias sem movimentação não pode ser negativo.")
+        stagnation = StagnationRule.coerce(stagnant_after_days)
 
         current = observation
         if current.status.value == "OK" and not current.is_valid:
@@ -335,8 +404,9 @@ class MonitorDatabase:
                 INSERT INTO snapshots (
                     run_id, system, number, collected_at, status, units_json,
                     executive_sector, last_movement, movement_date, content_hash,
-                    valid, comparison_status, error_code, error_message
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    valid, comparison_status, error_code, error_message,
+                    display_number
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_id,
@@ -353,6 +423,7 @@ class MonitorDatabase:
                     comparison.value,
                     current.error_code[:100],
                     error_message,
+                    current.display_number[:200],
                 ),
             )
             snapshot_id = int(cursor.lastrowid)
@@ -361,7 +432,7 @@ class MonitorDatabase:
                     previous_valid,
                     current,
                     snapshot_id,
-                    stagnant_after_days,
+                    stagnation,
                 )
                 if valid
                 else []
@@ -426,9 +497,12 @@ class MonitorDatabase:
                 "SELECT * FROM occurrences WHERE run_id = ? ORDER BY detected_at, id",
                 (selected_run["id"],),
             ).fetchall()
+            scope = selected_run["scope"]
             active_count = int(
                 connection.execute(
                     "SELECT COUNT(*) FROM processes WHERE active = 1"
+                    + (" AND system = ?" if scope else ""),
+                    (scope,) if scope else (),
                 ).fetchone()[0]
             )
             last_successful = connection.execute(
@@ -470,6 +544,92 @@ class MonitorDatabase:
             "current_failures": [self._snapshot_dict(row) for row in latest_failures],
             "current_valid": [self._snapshot_dict(row) for row in latest_valid],
         }
+
+    def _execution_stamp(self, connection: sqlite3.Connection) -> dict[str, Any]:
+        last = connection.execute(
+            "SELECT * FROM executions ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        last_successful = connection.execute(
+            """
+            SELECT * FROM executions
+            WHERE succeeded > 0 AND status IN ('OK', 'PARCIAL')
+            ORDER BY id DESC LIMIT 1
+            """
+        ).fetchone()
+        return {
+            "last_execution": dict(last) if last else None,
+            "last_successful_execution": (
+                dict(last_successful) if last_successful else None
+            ),
+        }
+
+    def current_view(self) -> dict[str, Any]:
+        """Estado atual de cada processo ativo: última fotografia válida e última tentativa."""
+        with self._connection() as connection:
+            processes = connection.execute(
+                "SELECT * FROM processes WHERE active = 1 ORDER BY area, program, system, number"
+            ).fetchall()
+            latest_valid = {
+                (row["system"], row["number"]): self._snapshot_dict(row)
+                for row in connection.execute(
+                    """
+                    SELECT s.* FROM snapshots s
+                    JOIN (
+                        SELECT system, number, MAX(id) AS latest_id
+                        FROM snapshots WHERE valid = 1 GROUP BY system, number
+                    ) latest ON latest.latest_id = s.id
+                    """
+                ).fetchall()
+            }
+            latest_attempt = {
+                (row["system"], row["number"]): self._snapshot_dict(row)
+                for row in connection.execute(
+                    """
+                    SELECT s.* FROM snapshots s
+                    JOIN (
+                        SELECT system, number, MAX(id) AS latest_id
+                        FROM snapshots GROUP BY system, number
+                    ) latest ON latest.latest_id = s.id
+                    """
+                ).fetchall()
+            }
+            stamp = self._execution_stamp(connection)
+        rows = []
+        for process in processes:
+            key = (process["system"], process["number"])
+            rows.append(
+                {
+                    "process": dict(process),
+                    "valid": latest_valid.get(key),
+                    "attempt": latest_attempt.get(key),
+                }
+            )
+        return {**stamp, "rows": rows}
+
+    def pending_occurrences(self) -> dict[str, Any]:
+        """Ocorrências ainda não levadas ao resumo executivo."""
+        with self._connection() as connection:
+            occurrences = connection.execute(
+                """
+                SELECT o.*, p.area, p.program, p.description AS process_description
+                FROM occurrences o
+                JOIN processes p ON p.system = o.system AND p.number = o.number
+                WHERE o.communicated = 0
+                ORDER BY p.area, p.program, o.system, o.number, o.detected_at, o.id
+                """
+            ).fetchall()
+            stamp = self._execution_stamp(connection)
+        return {**stamp, "occurrences": [dict(row) for row in occurrences]}
+
+    def mark_communicated(self, occurrence_ids: list[int]) -> int:
+        if not occurrence_ids:
+            return 0
+        with self._connection() as connection:
+            cursor = connection.executemany(
+                "UPDATE occurrences SET communicated = 1 WHERE id = ? AND communicated = 0",
+                [(occurrence_id,) for occurrence_id in occurrence_ids],
+            )
+            return cursor.rowcount
 
     def process_history(self, system: str, number: str) -> dict[str, Any]:
         system = canonical_system(system)

@@ -1,20 +1,32 @@
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
+import sqlite3
 import tempfile
 import unittest
 import asyncio
 
 from seasic_monitor.collectors import LiveCollectionDisabled
-from seasic_monitor.database import MonitorDatabase
-from seasic_monitor.domain import CollectionStatus, Observation, ProcessRecord
+from seasic_monitor.database import SCHEMA as LEGACY_SCHEMA, MonitorDatabase
+from seasic_monitor.domain import (
+    CollectionStatus,
+    Observation,
+    ProcessRecord,
+    local_date,
+    number_matches,
+)
 from seasic_monitor.playwright_collector import (
     PlaywrightCollector,
     PlaywrightCollectorConfig,
     _normalize_movement_date,
 )
-from seasic_monitor.monitor import run_edoc
-from seasic_monitor.reporting import render_markdown
+from seasic_monitor.monitor import RunPolicy, prepare_session, run_collection
+from seasic_monitor.reporting import (
+    render_current_view,
+    render_executive_summary,
+    render_markdown,
+)
 
 
 def observation(
@@ -217,13 +229,12 @@ class MonitorDatabaseTests(unittest.TestCase):
         )
         with self.assertRaises(LiveCollectionDisabled):
             asyncio.run(
-                run_edoc(
-                    database=self.database,
-                    collector_settings={"enabled": False},
-                    config_dir=self.temp_dir.name,
-                    stagnant_after_days=30,
-                    min_interval_seconds=5,
-                    max_processes_per_run=500,
+                run_collection(
+                    self.database,
+                    "EDOC",
+                    {"enabled": False},
+                    self.temp_dir.name,
+                    RunPolicy(),
                 )
             )
         self.assertIsNone(self.database.run_report())
@@ -234,6 +245,136 @@ class MonitorDatabaseTests(unittest.TestCase):
             _normalize_movement_date("Enviado em 06/10/2026 às 13:35"),
             "2026-10-06",
         )
+
+    def test_login_failure_is_reported_without_name_error(self) -> None:
+        settings = {"enabled": True, "entry_url": "https://example.invalid/"}
+        # Sem Playwright instalado, start() falha; a falha deve virar
+        # LiveCollectionDisabled (mensagem ao operador), nunca NameError.
+        with self.assertRaises(LiveCollectionDisabled):
+            asyncio.run(prepare_session("EDOC", settings, self.temp_dir.name))
+
+    def test_interrupted_execution_is_closed_on_next_run(self) -> None:
+        orphan = self.database.create_execution(mode="TESTE")
+        self.database.record_observation(orphan, observation(), stagnant_after_days=30)
+        self.database.create_execution(mode="TESTE")
+        report = self.database.run_report(orphan)
+        self.assertEqual(report["execution"]["status"], "FALHOU")
+        self.assertEqual(report["execution"]["succeeded"], 1)
+        self.assertIn("interrompida", report["execution"]["notes"])
+
+    def test_days_without_movement_use_brasilia_date(self) -> None:
+        # 01:30 UTC de 07/10 ainda é 06/10 em Brasília.
+        self.assertEqual(local_date("2026-10-07T01:30:00+00:00").isoformat(), "2026-10-06")
+        result = self.add_snapshot(
+            observation(
+                collected_at="2026-10-07T01:30:00+00:00",
+                movement_date="2026-09-07",
+            )
+        )
+        self.assertEqual(result["occurrences_added"], 0)  # 29 dias, abaixo de 30
+
+    def test_edoc_number_with_suffix_matches_registered_short_number(self) -> None:
+        self.assertTrue(number_matches("2439/2026", "2439/2026-COMPR-SEASIC"))
+        self.assertTrue(number_matches("2439/2026-COMPR-SEASIC", " 2439/2026-compr-seasic "))
+        self.assertFalse(number_matches("439/2026", "2439/2026-COMPR-SEASIC"))
+        self.assertFalse(number_matches("2439/2026", "2439/20261"))
+        self.assertFalse(number_matches("2439/2026-COMPR", "2439/2026-COMPR-SEASIC"))
+        self.assertFalse(number_matches("2439/2026", ""))
+
+    def test_display_number_is_stored_and_old_databases_are_migrated(self) -> None:
+        legacy = Path(self.temp_dir.name) / "legacy.sqlite"
+        connection = sqlite3.connect(legacy)
+        connection.executescript(LEGACY_SCHEMA)  # esquema sem display_number
+        connection.close()
+        MonitorDatabase(legacy).initialize()
+        connection = sqlite3.connect(legacy)
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(snapshots)")}
+        connection.close()
+        self.assertIn("display_number", columns)
+
+        result = self.add_snapshot(
+            Observation(
+                system="SEI",
+                number="100/2026",
+                collected_at="2026-10-06T09:00:00+00:00",
+                status=CollectionStatus.OK,
+                units=("GABINETE",),
+                last_movement="Recebido",
+                movement_date="2026-10-06",
+                display_number="100/2026-COMPR-SEASIC",
+            )
+        )
+        history = self.database.process_history("SEI", "100/2026")
+        self.assertEqual(history["snapshots"][0]["id"], result["snapshot_id"])
+        self.assertEqual(history["snapshots"][0]["display_number"], "100/2026-COMPR-SEASIC")
+
+    def test_current_view_shows_last_valid_state_and_current_failure(self) -> None:
+        self.database.upsert_process(
+            ProcessRecord(system="SEI", number="100/2026", area="DSAN", description="Câmaras frias")
+        )
+        self.add_snapshot(observation(units=("GSP", "DIPLAN"), movement_date="2026-09-06"))
+        self.add_snapshot(
+            observation(
+                collected_at="2026-10-06T10:00:00+00:00",
+                status=CollectionStatus.UNAVAILABLE,
+                error="fora do ar",
+            )
+        )
+        view = self.database.current_view()
+        markdown = render_current_view(view, today=date(2026, 10, 6))
+        self.assertIn("DIPLAN; GSP", markdown)
+        self.assertIn("06/09/2026", markdown)
+        self.assertIn("| 30 |", markdown)
+        self.assertIn("Falha atual: INDISPONIVEL", markdown)
+        self.assertIn("Câmaras frias", markdown)
+        csv_text = render_current_view(view, "csv", today=date(2026, 10, 6))
+        self.assertTrue(csv_text.startswith("Sistema,Processo,"))
+        self.assertIn("SEI,100/2026,DSAN", csv_text)
+
+    def test_current_view_without_execution_warns_instead_of_showing_no_movement(self) -> None:
+        markdown = render_current_view(self.database.current_view())
+        self.assertIn("nenhuma", markdown)
+        self.assertIn("Nunca consultado", markdown)
+
+    def test_executive_summary_lists_each_occurrence_once(self) -> None:
+        self.add_snapshot(observation(units=("GABINETE",)))
+        self.add_snapshot(
+            observation(
+                collected_at="2026-10-06T11:00:00+00:00",
+                units=("DIPLAN",),
+                movement="Encaminhado",
+                movement_date="2026-10-06",
+            )
+        )
+        pending = self.database.pending_occurrences()
+        summary = render_executive_summary(pending)
+        self.assertIn("**Mudou de unidade:** 1", summary)
+        self.assertIn("GABINETE → DIPLAN", summary)
+        self.assertIn("## TESTE", summary)
+        marked = self.database.mark_communicated([item["id"] for item in pending["occurrences"]])
+        self.assertEqual(marked, 2)
+        again = render_executive_summary(self.database.pending_occurrences())
+        self.assertIn("Nenhuma novidade desde o último resumo.", again)
+
+    def test_missing_profile_path_defaults_to_browser_profiles(self) -> None:
+        config = PlaywrightCollectorConfig.from_mapping("EDOC", {}, self.temp_dir.name)
+        self.assertEqual(
+            config.profile_path, Path(self.temp_dir.name) / "browser_profiles" / "edoc"
+        )
+
+    def test_frames_must_reference_configured_selectors(self) -> None:
+        with self.assertRaises(ValueError):
+            PlaywrightCollectorConfig.from_mapping(
+                "SEI",
+                {"selectors": {"units_open": ".u"}, "frames": {"unidades": "#ifr"}},
+                self.temp_dir.name,
+            )
+        config = PlaywrightCollectorConfig.from_mapping(
+            "SEI",
+            {"selectors": {"units_open": ".u"}, "frames": {"units_open": ["#a", "#b"]}},
+            self.temp_dir.name,
+        )
+        self.assertEqual(config.frames, {"units_open": ("#a", "#b")})
 
 
 if __name__ == "__main__":

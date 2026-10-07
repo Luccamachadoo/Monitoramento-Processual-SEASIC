@@ -2,17 +2,59 @@
 path = "data/processos.sqlite"
 
 [monitor]
-# Dias corridos. Ajustar para dias úteis somente após decisão do Gabinete.
-stagnant_after_days = 30
+# Processo "parado": sem movimentação há N dias úteis (decisão do Gabinete).
+# Use stagnant_day_kind = "corridos" para contar dias corridos.
+stagnant_after_days = 20
+stagnant_day_kind = "uteis"
+# Feriados nacionais (inclusive Sexta-feira Santa) já são considerados. Acrescente
+# estaduais, municipais e pontos facultativos, em AAAA-MM-DD. Ex.: 8 de julho (Sergipe).
+holidays = []
 
 # Será usado pelos coletores reais somente após autorização institucional.
 min_interval_seconds = 5
 max_processes_per_run = 500
+# Teto por sistema somando todas as execuções do dia (horário de Brasília).
+max_processes_per_day = 500
+# Falhas técnicas seguidas (erro de extração, sistema indisponível) que interrompem a rodada.
+max_consecutive_failures = 3
+# Janela permitida, horário de Brasília, ex.: "05:00-08:00". Vazio = sem restrição.
+allowed_hours = ""
+
+[rotina]
+# Comando rotina (Agendador de Tarefas): resumo e visão são gravados aqui, em pasta restrita.
+reports_dir = "data/relatorios"
+# true: o resumo gravado em arquivo conta como comunicado e não se repete no dia seguinte.
+mark_communicated = true
+backup_dir = "data/backup"
+# Quantos backups diários manter (os mais antigos são apagados). Copie-os também para fora da máquina.
+backup_keep = 30
+
+[logs]
+# Log técnico: só identificador do processo, resultado e código de erro.
+dir = "logs"
+retention_days = 180
+
+[sheets]
+# Publicação da visão atual no Google Sheets (comando planilha). Ver docs/operacao.md.
+enabled = false
+# ID da planilha (trecho da URL entre /d/ e /edit). Compartilhe-a só com a conta de
+# serviço e com a equipe do Gabinete; nunca deixe acessível por link.
+spreadsheet_id = ""
+worksheet = "Visão atual — robô"
+# JSON da conta de serviço, fora do repositório e em pasta restrita. Também pode vir
+# da variável de ambiente SEASIC_SHEETS_CREDENTIALS.
+credentials_path = ""
 
 [collectors.SEI]
 enabled = false
+# true só para run/consultar sem janela; login sempre abre o navegador visível.
+headless = false
 entry_url = ""
+# Perfil do navegador com a sessão salva (padrão: browser_profiles/sei); pasta restrita.
 profile_path = "browser_profiles/sei"
+# Processo de referência consultado primeiro; se falhar, a rodada para (layout mudou).
+# Precisa estar ativo no Cadastro Mestre. Vazio = sem processo de referência.
+canary = ""
 
 [collectors.SEI.selectors]
 process_input = ""
@@ -28,10 +70,20 @@ movement_date = ""
 no_result = ""
 session_expired = ""
 
+# O SEI mostra árvore e conteúdo do processo em iframes. Para cada seletor que
+# está dentro de um iframe, indique o seletor do iframe (ou uma lista, do mais
+# externo ao mais interno). Ex.: units_open = "#ifrVisualizacao"
+[collectors.SEI.frames]
+
 [collectors.EDOC]
 enabled = false
+# true só para run/consultar sem janela; login sempre abre o navegador visível.
+headless = false
 entry_url = ""
 profile_path = "browser_profiles/edoc"
+# Processo de referência consultado primeiro; se falhar, a rodada para (layout mudou).
+# Precisa estar ativo no Cadastro Mestre. Vazio = sem processo de referência.
+canary = ""
 
 [collectors.EDOC.selectors]
 process_input = ""

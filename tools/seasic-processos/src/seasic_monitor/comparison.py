@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
 import hashlib
 
-from .domain import Observation, normalized_text, normalized_units, parse_movement_date
+from .domain import (
+    Observation,
+    StagnationRule,
+    local_date,
+    normalized_text,
+    normalized_units,
+    parse_movement_date,
+)
 
 
 @dataclass(frozen=True)
@@ -23,8 +29,9 @@ def compare_observation(
     previous: dict[str, object] | None,
     current: Observation,
     current_snapshot_id: int,
-    stagnant_after_days: int,
+    stagnation: StagnationRule | int,
 ) -> list[CandidateOccurrence]:
+    rule = StagnationRule.coerce(stagnation)
     if not current.is_valid:
         return []
 
@@ -69,17 +76,17 @@ def compare_observation(
                 )
             )
 
-    days_without_movement = (
-        parse_movement_date(current.collected_at).toordinal()
-        - parse_movement_date(current.movement_date).toordinal()
+    days_without_movement = rule.days_between(
+        parse_movement_date(current.movement_date),
+        local_date(current.collected_at),
     )
-    if stagnant_after_days > 0 and days_without_movement >= stagnant_after_days:
+    if rule.limit > 0 and days_without_movement >= rule.limit:
         occurrences.append(
             CandidateOccurrence(
                 kind="PARADO",
                 description=(
-                    f"Sem movimentação há {days_without_movement} dias "
-                    f"(limite: {stagnant_after_days})."
+                    f"Sem movimentação há {days_without_movement} {rule.unit} "
+                    f"(limite: {rule.limit})."
                 ),
                 dedupe_key=_key(
                     "PARADO",

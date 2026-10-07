@@ -8,6 +8,7 @@ out-tsc
 .expo
 .expo-shared
 __pycache__/
+*.egg-info/
 *.py[cod]
 
 # dependencies
@@ -54,9 +55,15 @@ Thumbs.db
 /tools/seasic-processos/config.toml
 /tools/seasic-processos/data/
 /tools/seasic-processos/browser_profiles/
+/tools/seasic-processos/credentials/
+/tools/seasic-processos/logs/
+**/*service-account*.json
 /tools/seasic-processos/**/*.sqlite
 /tools/seasic-processos/**/*.sqlite-shm
 /tools/seasic-processos/**/*.sqlite-wal
 /tools/seasic-processos/**/*.db
 /tools/seasic-processos/**/*.db-shm
 /tools/seasic-processos/**/*.db-wal
+
+# Capturas de tela dos sistemas oficiais podem conter dados pessoais; não versionar.
+/attached_assets/

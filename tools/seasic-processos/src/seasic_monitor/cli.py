@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import csv
+from dataclasses import asdict, replace
+from datetime import datetime
 import os
 from pathlib import Path
 import sys
@@ -10,9 +12,31 @@ import tomllib
 
 from .collectors import LiveCollectionDisabled
 from .database import MonitorDatabase
-from .domain import ProcessRecord
-from .monitor import prepare_edoc_session, run_demo, run_edoc
-from .reporting import render_json, render_markdown, render_status
+from .diagnostico import (
+    checks_passed,
+    render_checks,
+    render_trace,
+    static_checks,
+    trace_consultation,
+)
+from .logs import LogSettings, configure_logging
+from .domain import (
+    BRAZIL_TZ,
+    ProcessRecord,
+    StagnationRule,
+    canonical_system,
+    display_system,
+)
+from .monitor import RunPolicy, consult_one, prepare_session, run_collection, run_demo
+from .reporting import (
+    render_current_view,
+    render_executive_summary,
+    render_json,
+    render_markdown,
+    render_status,
+)
+from .rotina import render_routine, run_routine
+from .sheets import GspreadWriter, SheetsPublishError, SheetsSettings, publish
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[2]
@@ -40,25 +64,63 @@ def _parser() -> argparse.ArgumentParser:
     report.add_argument(
         "--format", choices=("markdown", "json"), default="markdown"
     )
+    view = commands.add_parser(
+        "visao", help="Mostra o estado atual de cada processo ativo (visão executiva)."
+    )
+    view.add_argument("--format", choices=("markdown", "csv"), default="markdown")
+    view.add_argument("--saida", type=Path, help="Grava em arquivo em vez de imprimir.")
+    diagnosis = commands.add_parser(
+        "diagnostico",
+        help="Confere a configuração; com --sistema e --processo, consulta passo a passo sem gravar.",
+    )
+    diagnosis.add_argument("--sistema", help="SEI ou e-DOC (para a consulta passo a passo)")
+    diagnosis.add_argument("--processo", help="Número de um processo conhecido")
+    commands.add_parser(
+        "rotina",
+        help="Rotina diária: coleta, resumo e visão em arquivo, planilha, backup e limpeza de logs.",
+    )
+    commands.add_parser(
+        "planilha",
+        help="Publica a visão atual na aba do robô no Google Sheets (exige [sheets] configurado).",
+    )
+    summary = commands.add_parser(
+        "resumo", help="Resumo executivo das ocorrências ainda não comunicadas."
+    )
+    summary.add_argument(
+        "--marcar-comunicado",
+        action="store_true",
+        help="Depois de emitir, marca as ocorrências como comunicadas.",
+    )
     history = commands.add_parser("history", help="Mostra histórico de um processo cadastrado.")
     history.add_argument("system", help="SEI ou e-DOC")
     history.add_argument("number", help="Número cadastrado do processo")
     catalog = commands.add_parser("import-catalog", help="Importa ou atualiza um CSV de cadastro.")
     catalog.add_argument("csv_file", type=Path)
+    catalog.add_argument(
+        "--inativar-ausentes",
+        action="store_true",
+        help="Inativa, com motivo registrado, processos ativos que não estão no CSV.",
+    )
     backup = commands.add_parser("backup", help="Cria uma cópia SQLite consistente.")
     backup.add_argument("destination", type=Path)
-    commands.add_parser(
+    login = commands.add_parser(
+        "login",
+        help="Abre o perfil local do sistema para autenticação manual pelo operador.",
+    )
+    login.add_argument("--sistema", required=True, help="SEI ou e-DOC")
+    run = commands.add_parser(
         "run",
-        help="Consulta genérica bloqueada; configure o coletor e-DOC para usar run-edoc.",
+        help="Consulta em série os processos ativos de um sistema (exige configuração institucional).",
     )
-    commands.add_parser(
-        "login-edoc",
-        help="Abre o perfil local do e-DOC para autenticação manual pelo operador.",
+    run.add_argument("--sistema", required=True, help="SEI ou e-DOC")
+    consult = commands.add_parser(
+        "consultar",
+        help="Consulta um único processo e mostra o resultado, sem gravar no banco.",
     )
-    commands.add_parser(
-        "run-edoc",
-        help="Consulta processos e-DOC ativos em série (exige configuração institucional).",
-    )
+    consult.add_argument("system", help="SEI ou e-DOC")
+    consult.add_argument("number", help="Número do processo")
+    commands.add_parser("login-edoc", help="Atalho para: login --sistema e-DOC.")
+    commands.add_parser("run-edoc", help="Atalho para: run --sistema e-DOC.")
     return parser
 
 
@@ -69,6 +131,9 @@ def _load_config(config_argument: str | None) -> tuple[dict, Path]:
         else PACKAGE_ROOT / "config.toml"
     )
     if not config_path.exists():
+        if config_argument:
+            # Um caminho informado e inexistente é erro de digitação, não "sem config".
+            raise ValueError(f"Arquivo de configuração não encontrado: {config_path}")
         return {}, PACKAGE_ROOT
     with config_path.open("rb") as file:
         return tomllib.load(file), config_path.resolve().parent
@@ -86,8 +151,10 @@ def _database_path(args: argparse.Namespace, config: dict, config_dir: Path) -> 
     return path
 
 
-def _import_catalog(database: MonitorDatabase, csv_path: Path) -> int:
-    imported = 0
+def _read_catalog(csv_path: Path) -> list[ProcessRecord]:
+    """Lê e valida o CSV inteiro antes de gravar qualquer linha."""
+    records: list[ProcessRecord] = []
+    seen: dict[tuple[str, str], int] = {}
     with csv_path.open("r", encoding="utf-8-sig", newline="") as file:
         reader = csv.DictReader(file)
         required = {"system", "numero"}
@@ -118,15 +185,24 @@ def _import_catalog(database: MonitorDatabase, csv_path: Path) -> int:
                 )
             except ValueError as exc:
                 raise ValueError(f"Linha {line}: {exc}") from exc
-            database.upsert_process(process)
-            imported += 1
-    return imported
+            key = (process.system, process.number)
+            if key in seen:
+                raise ValueError(
+                    f"Linha {line}: processo repetido (já aparece na linha {seen[key]})."
+                )
+            seen[key] = line
+            records.append(process)
+    return records
+
+
+def _collector_settings(config: dict, system: str) -> dict:
+    return config.get("collectors", {}).get(system, {})
 
 
 def _run(args: argparse.Namespace) -> int:
     config, config_dir = _load_config(args.config)
     database = MonitorDatabase(_database_path(args, config, config_dir))
-    stagnant_after_days = int(config.get("monitor", {}).get("stagnant_after_days", 30))
+    stagnation = StagnationRule.from_config(config.get("monitor", {}))
 
     if args.command == "init":
         database.initialize()
@@ -137,12 +213,42 @@ def _run(args: argparse.Namespace) -> int:
         if args.database is None and os.environ.get("SEASIC_MONITOR_DB") is None:
             demo_path = config_dir / "data" / "demo.sqlite"
             database = MonitorDatabase(demo_path)
-        run_id = run_demo(database, stagnant_after_days)
+        run_id = run_demo(database, stagnation)
         print(f"Execução sintética {run_id} gravada em: {database.path}")
         print(render_markdown(database.run_report(run_id)))
         return 0
-    if args.command not in {"run", "run-edoc", "login-edoc"}:
+    if args.command == "login-edoc":
+        args.command, args.sistema = "login", "EDOC"
+    if args.command == "run-edoc":
+        args.command, args.sistema = "run", "EDOC"
+    if args.command == "diagnostico":
+        if bool(args.sistema) != bool(args.processo):
+            raise ValueError("Use --sistema e --processo juntos.")
+        if args.processo:
+            system = canonical_system(args.sistema)
+            trace, observation = asyncio.run(
+                trace_consultation(
+                    system, args.processo, _collector_settings(config, system), config_dir
+                )
+            )
+            print(render_trace(system, args.processo, trace, observation), end="")
+            return 0 if observation is not None and observation.is_valid else 1
+        config_path = (
+            Path(args.config).expanduser() if args.config else PACKAGE_ROOT / "config.toml"
+        )
+        checks = static_checks(
+            config, config_path if config_path.exists() else None, config_dir, database
+        )
+        print(render_checks(checks), end="")
+        return 0 if checks_passed(checks) else 1
+    if args.command not in {"run", "login", "consultar"}:
         database.initialize()
+    if args.command in {"run", "rotina", "planilha", "consultar"}:
+        configure_logging(LogSettings.from_config(config, config_dir))
+    if args.command == "rotina":
+        results = run_routine(database, config, config_dir, stagnation)
+        print(render_routine(results), end="")
+        return 0 if all(result.ok for result in results) else 1
     if args.command == "status":
         print(render_status(database.run_report()))
         return 0
@@ -153,30 +259,74 @@ def _run(args: argparse.Namespace) -> int:
         else:
             print(render_markdown(report_data))
         return 0
+    if args.command == "visao":
+        text = render_current_view(database.current_view(), args.format, rule=stagnation)
+        if args.saida:
+            args.saida.parent.mkdir(parents=True, exist_ok=True)
+            # utf-8-sig para o Excel reconhecer acentos ao abrir o CSV.
+            args.saida.write_text(text, encoding="utf-8-sig" if args.format == "csv" else "utf-8")
+            print(f"Visão atual gravada em: {args.saida}")
+        else:
+            print(text, end="")
+        return 0
+    if args.command == "planilha":
+        settings = SheetsSettings.from_config(config, config_dir)
+        settings.validate()
+        count = publish(database, GspreadWriter(settings), settings.worksheet, stagnation)
+        print(f"Visão atual publicada na aba \"{settings.worksheet}\": {count} processo(s).")
+        return 0
+    if args.command == "resumo":
+        pending = database.pending_occurrences()
+        print(render_executive_summary(pending), end="")
+        if args.marcar_comunicado:
+            marked = database.mark_communicated([item["id"] for item in pending["occurrences"]])
+            print(f"\n{marked} ocorrência(s) marcada(s) como comunicada(s).", file=sys.stderr)
+        return 0
     if args.command == "history":
         print(render_json(database.process_history(args.system, args.number)))
         return 0
     if args.command == "import-catalog":
         database.initialize()
-        count = _import_catalog(database, args.csv_file)
-        print(f"{count} registro(s) importado(s)/atualizado(s).")
+        records = _read_catalog(args.csv_file)
+        for process in records:
+            database.upsert_process(process)
+        print(f"{len(records)} registro(s) importado(s)/atualizado(s).")
+        listed = {(process.system, process.number) for process in records}
+        absent = [
+            process
+            for process in database.active_processes()
+            if (process.system, process.number) not in listed
+        ]
+        if absent:
+            labels = ", ".join(f"{display_system(p.system)} {p.number}" for p in absent)
+            if args.inativar_ausentes:
+                reason = f"Ausente do cadastro importado em {datetime.now(BRAZIL_TZ):%d/%m/%Y}."
+                for process in absent:
+                    database.upsert_process(
+                        replace(process, active=False, inactivation_reason=reason)
+                    )
+                print(f"{len(absent)} processo(s) ausente(s) do CSV inativado(s): {labels}.")
+            else:
+                print(
+                    f"Atenção: {len(absent)} processo(s) ativo(s) não estão no CSV e continuam "
+                    f"sendo monitorados: {labels}. Use --inativar-ausentes para inativá-los.",
+                    file=sys.stderr,
+                )
         return 0
     if args.command == "backup":
         database.initialize()
         backup_path = database.backup(args.destination)
         print(f"Backup SQLite criado em: {backup_path}")
         return 0
-    if args.command == "login-edoc":
+    if args.command == "login":
+        system = canonical_system(args.sistema)
         logged_in = asyncio.run(
-            prepare_edoc_session(
-                config.get("collectors", {}).get("EDOC", {}),
-                config_dir,
-            )
+            prepare_session(system, _collector_settings(config, system), config_dir)
         )
         if logged_in:
             print(
                 "Login manual concluído; perfil local salvo. "
-                "run-edoc ainda valida seletores e autorização antes de consultar."
+                "run ainda valida seletores e autorização antes de consultar."
             )
         else:
             print(
@@ -184,30 +334,33 @@ def _run(args: argparse.Namespace) -> int:
                 "foi solicitada."
             )
         return 0
-    if args.command == "run-edoc":
-        run_id = asyncio.run(
-            run_edoc(
-                database=database,
-                collector_settings=config.get("collectors", {}).get("EDOC", {}),
-                config_dir=config_dir,
-                stagnant_after_days=stagnant_after_days,
-                min_interval_seconds=float(
-                    config.get("monitor", {}).get("min_interval_seconds", 5)
-                ),
-                max_processes_per_run=int(
-                    config.get("monitor", {}).get("max_processes_per_run", 500)
-                ),
+    if args.command == "consultar":
+        system = canonical_system(args.system)
+        observation = asyncio.run(
+            consult_one(
+                system,
+                args.number,
+                _collector_settings(config, system),
+                config_dir,
             )
         )
-        print(f"Execução e-DOC {run_id} gravada em: {database.path}")
+        print(render_json({**asdict(observation), "valid": observation.is_valid}))
+        print("Consulta avulsa: nada foi gravado no banco.", file=sys.stderr)
+        return 0 if observation.is_valid else 1
+    if args.command == "run":
+        system = canonical_system(args.sistema)
+        run_id = asyncio.run(
+            run_collection(
+                database,
+                system,
+                _collector_settings(config, system),
+                config_dir,
+                RunPolicy.from_config(config, system),
+            )
+        )
+        print(f"Execução {args.sistema} {run_id} gravada em: {database.path}")
         print(render_markdown(database.run_report(run_id)))
         return 0
-    if args.command == "run":
-        raise LiveCollectionDisabled(
-            "A consulta real não está habilitada nesta entrega. "
-            "É necessário implementar e validar os coletores SEI/e-DOC em ambiente "
-            "institucional autorizado; nenhum controle de acesso será contornado."
-        )
     raise ValueError(f"Comando não reconhecido: {args.command}")
 
 
@@ -215,7 +368,7 @@ def main() -> None:
     args = _parser().parse_args()
     try:
         status = _run(args)
-    except (OSError, ValueError, LiveCollectionDisabled) as exc:
+    except (OSError, ValueError, LiveCollectionDisabled, SheetsPublishError) as exc:
         print(f"Erro: {exc}", file=sys.stderr)
         status = 2
     raise SystemExit(status)
