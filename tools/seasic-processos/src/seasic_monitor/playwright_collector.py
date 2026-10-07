@@ -47,7 +47,10 @@ class PlaywrightCollectorConfig:
         config: dict[str, Any],
         base_dir: str | Path,
     ) -> PlaywrightCollectorConfig:
-        profile = Path(config.get("profile_path", ""))
+        # Sem profile_path, o perfil (cookies da sessão) iria parar na pasta do
+        # config.toml; o padrão fica em browser_profiles/, ignorado pelo Git.
+        raw_profile = str(config.get("profile_path", "")).strip()
+        profile = Path(raw_profile or f"browser_profiles/{canonical_system(system).lower()}")
         if not profile.is_absolute():
             profile = Path(base_dir) / profile
         selectors = {
@@ -74,6 +77,20 @@ class PlaywrightCollectorConfig:
             frames=frames,
             headless=bool(config.get("headless", False)),
         )
+
+
+@dataclass(frozen=True)
+class TraceStep:
+    """Passo do diagnóstico: só aparece na tela do operador, nunca em banco ou log."""
+
+    step: str
+    ok: bool
+    detail: str = ""
+
+
+def _sample(text: str, limit: int = 120) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
 class PlaywrightCollector:
@@ -215,7 +232,18 @@ class PlaywrightCollector:
             )
         return True
 
-    async def collect(self, process: ProcessRecord) -> Observation:
+    async def collect(
+        self,
+        process: ProcessRecord,
+        trace: list[TraceStep] | None = None,
+    ) -> Observation:
+        """Consulta um processo. Com `trace`, registra cada passo para o diagnóstico."""
+
+        def note(step: str, ok: bool, detail: str = "") -> None:
+            if trace is not None:
+                trace.append(TraceStep(step, ok, detail))
+
+        current = "início"
         if self._page is None:
             raise RuntimeError("Inicie o coletor antes de consultar processos.")
         if process.system != self.config.system:
@@ -224,7 +252,9 @@ class PlaywrightCollector:
         selectors = self.config.selectors
         display_number = ""
         try:
+            current = "session_expired (antes da busca)"
             if await self._is_visible("session_expired"):
+                note(current, False, "indicador de sessão expirada visível")
                 return self._failed(
                     process,
                     CollectionStatus.SESSION_EXPIRED,
@@ -234,30 +264,42 @@ class PlaywrightCollector:
             # Recarrega a busca a cada processo: um resultado da consulta anterior
             # ainda visível faria result_ready passar e os dados de outro processo
             # seriam gravados neste.
+            current = "entry_url"
             await self._page.goto(
                 self.config.entry_url,
                 wait_until="domcontentloaded",
                 timeout=30_000,
             )
+            note(current, True, "página de busca carregada")
+            current = "session_expired"
             if await self._is_visible("session_expired"):
+                note(current, False, "indicador de sessão expirada visível")
                 return self._failed(
                     process,
                     CollectionStatus.SESSION_EXPIRED,
                     "SESSAO_EXPIRADA",
                     "Sessão expirada; é necessário login humano autorizado.",
                 )
+            note(current, True, "sessão ativa" if selectors.get("session_expired") else "seletor não configurado")
+            current = "process_input"
             await self._locator("process_input").first.wait_for(
                 state="visible",
                 timeout=30_000,
             )
             await self._locator("process_input").fill(process.number)
+            note(current, True, f"número {process.number} digitado")
+            current = "search_button"
             await self._locator("search_button").click()
+            note(current, True, "busca enviada")
+            current = "result_ready"
             try:
                 await self._locator("result_ready").first.wait_for(
                     state="visible",
                     timeout=30_000,
                 )
+                note(current, True, f"{await self._locator('result_ready').count()} elemento(s)")
             except self._timeout_error:
+                note(current, False, "não apareceu em 30 s")
                 if await self._is_visible("session_expired"):
                     return self._failed(
                         process,
@@ -279,20 +321,25 @@ class PlaywrightCollector:
                     "O seletor do resultado não apareceu dentro do prazo.",
                 )
 
+            current = "no_result"
             if await self._is_visible("no_result"):
+                note(current, False, "aviso de processo não localizado visível")
                 return self._failed(
                     process,
                     CollectionStatus.NOT_FOUND,
                     "NAO_LOCALIZADO",
                     "O sistema não localizou o processo consultado.",
                 )
+            note(current, True, "sem aviso de não localizado" if selectors.get("no_result") else "seletor não configurado")
 
             if selectors.get("detail_link"):
+                current = "result_row"
                 candidates = self._locator("result_row").filter(
                     has_text=process.number
                 )
                 candidate_count = await candidates.count()
                 if candidate_count == 0:
+                    note(current, False, "nenhuma linha contém o número consultado")
                     return self._failed(
                         process,
                         CollectionStatus.EXTRACTION_ERROR,
@@ -300,6 +347,7 @@ class PlaywrightCollector:
                         "A busca retornou conteúdo, mas não a linha do processo esperado.",
                     )
                 rows = []
+                seen_numbers: list[str] = []
                 for index in range(candidate_count):
                     candidate = candidates.nth(index)
                     number_cell = candidate.locator(
@@ -310,6 +358,13 @@ class PlaywrightCollector:
                     )
                     if number_matches(process.number, actual_number):
                         rows.append((candidate, actual_number))
+                    seen_numbers.append(_sample(actual_number, 60))
+                note(
+                    "process_number_cell",
+                    len(rows) == 1,
+                    f"{candidate_count} linha(s) com o número ({'; '.join(seen_numbers)}); "
+                    f"{len(rows)} corresponde(m) ao processo",
+                )
                 if not rows:
                     return self._failed(
                         process,
@@ -325,13 +380,18 @@ class PlaywrightCollector:
                         "A busca retornou mais de uma linha correspondente ao processo.",
                     )
                 display_number = rows[0][1]
+                current = "detail_link"
                 await rows[0][0].locator(selectors["detail_link"]).click()
+                note(current, True, f"detalhe de {display_number} aberto")
+                current = "detail_ready"
                 try:
                     await self._locator("detail_ready").first.wait_for(
                         state="visible",
                         timeout=30_000,
                     )
+                    note(current, True)
                 except self._timeout_error:
+                    note(current, False, "não apareceu em 30 s")
                     if await self._is_visible("session_expired"):
                         return self._failed(
                             process,
@@ -346,14 +406,39 @@ class PlaywrightCollector:
                         "A tela de detalhes não apareceu dentro do prazo.",
                     )
 
+            current = "units_open"
             units = tuple(
                 unit.strip()
                 for unit in await self._locator("units_open").all_inner_texts()
                 if unit.strip()
             )
+            note(current, bool(units), "; ".join(_sample(unit, 40) for unit in units) or "nenhuma unidade encontrada")
+            if not units:
+                # Seletor quebrado não pode virar "nenhuma unidade aberta": isso geraria
+                # falsa mudança de unidade em todos os processos. Processo concluído,
+                # sem unidade aberta, deve ser inativado no Cadastro Mestre.
+                return self._failed(
+                    process,
+                    CollectionStatus.EXTRACTION_ERROR,
+                    "UNIDADES_AUSENTES",
+                    "Nenhuma unidade aberta foi encontrada; confira o seletor units_open "
+                    "ou inative o processo se ele estiver concluído.",
+                )
+            current = "last_movement"
             last_movement = await self._text("last_movement")
-            movement_date = _normalize_movement_date(
-                await self._text("movement_date")
+            note(current, bool(last_movement), _sample(last_movement) or "vazio")
+            current = "movement_date"
+            raw_date = await self._text("movement_date")
+            movement_date = _normalize_movement_date(raw_date)
+            try:
+                parse_movement_date(movement_date)
+                date_ok = True
+            except ValueError:
+                date_ok = False
+            note(
+                current,
+                date_ok,
+                f"{_sample(raw_date, 60) or 'vazio'} → {movement_date if date_ok else 'data não reconhecida'}",
             )
             observation = Observation(
                 system=process.system,
@@ -375,6 +460,7 @@ class PlaywrightCollector:
                 )
             return observation
         except self._timeout_error:
+            note(current, False, "tempo esgotado esperando o seletor")
             return self._failed(
                 process,
                 CollectionStatus.EXTRACTION_ERROR,
@@ -382,7 +468,9 @@ class PlaywrightCollector:
                 "A página ou um seletor não respondeu dentro do prazo.",
             )
         except Exception as exc:
-            # Do not store page text, HTML, URLs, or browser exception details in logs.
+            # A mensagem do navegador só vai para o diagnóstico na tela do operador;
+            # nunca para banco ou log (pode conter texto da página ou URL).
+            note(current, False, f"{type(exc).__name__}: {_sample(str(exc).splitlines()[0] if str(exc) else '', 160)}")
             return self._failed(
                 process,
                 CollectionStatus.UNAVAILABLE,

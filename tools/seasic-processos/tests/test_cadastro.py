@@ -15,6 +15,8 @@ class CatalogImportTests(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.base = Path(self.temp_dir.name)
         self.db_path = self.base / "processos.sqlite"
+        self.config_path = self.base / "config.toml"
+        self.config_path.write_text("", encoding="utf-8")
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
@@ -27,7 +29,7 @@ class CatalogImportTests(unittest.TestCase):
     def run_cli(self, *argv: str) -> tuple[int, str, str]:
         out, err = io.StringIO(), io.StringIO()
         args = cli._parser().parse_args(
-            ["--config", str(self.base / "sem-config.toml"), "--database", str(self.db_path), *argv]
+            ["--config", str(self.config_path), "--database", str(self.db_path), *argv]
         )
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             code = cli._run(args)
@@ -56,6 +58,13 @@ class CatalogImportTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Linha 3"):
             self.run_cli("import-catalog", str(bad))
         self.assertEqual(self.active(), set())
+
+    def test_missing_explicit_config_is_an_error(self) -> None:
+        args = cli._parser().parse_args(
+            ["--config", str(self.base / "nao-existe.toml"), "--database", str(self.db_path), "status"]
+        )
+        with self.assertRaisesRegex(ValueError, "não encontrado"):
+            cli._run(args)
 
     def test_duplicate_process_is_rejected(self) -> None:
         duplicated = self.csv("dup.csv", "system,numero\nSEI,1/2026\nSEI, 1/2026 \n")

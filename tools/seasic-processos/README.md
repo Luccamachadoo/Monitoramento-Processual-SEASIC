@@ -56,6 +56,8 @@ Após autorização e configuração local, a coleta real é:
 
 ```bash
 PYTHONPATH=src python3 -m seasic_monitor.cli login --sistema e-DOC
+PYTHONPATH=src python3 -m seasic_monitor.cli diagnostico                  # confere config, cadastro e extras
+PYTHONPATH=src python3 -m seasic_monitor.cli diagnostico --sistema e-DOC --processo 2439/2026  # passo a passo
 PYTHONPATH=src python3 -m seasic_monitor.cli consultar e-DOC 2439/2026   # um processo, não grava
 PYTHONPATH=src python3 -m seasic_monitor.cli run --sistema e-DOC
 ```

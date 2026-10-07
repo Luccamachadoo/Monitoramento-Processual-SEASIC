@@ -97,15 +97,26 @@ exemplo está desativada e não tem endereço nem seletores. Antes de habilitá-
 5. use `login --sistema e-DOC` para abrir o perfil local e autenticar-se na janela
    oficial. Esse comando precisa apenas de URL e `enabled = true`; ele não lê nem
    preenche usuário, senha, MFA ou CAPTCHA;
-6. valide um processo conhecido com `consultar e-DOC NUMERO` (não grava no banco)
-   e confira manualmente no sistema oficial;
+6. rode `diagnostico` (sem argumentos) para conferir config, cadastro, extras e
+   pastas; depois `diagnostico --sistema e-DOC --processo NUMERO` com um processo
+   conhecido. Ele mostra cada passo da consulta — qual seletor achou o quê e qual
+   falhou — sem gravar no banco nem no log. Ajuste os seletores até tudo ficar OK
+   e confira os valores no sistema oficial;
 7. defina esse processo como `canary` em `[collectors.EDOC]` antes de qualquer lote.
 
 ### SEI
 
 O mesmo coletor atende o SEI. Campos exibidos dentro de iframes (árvore do
 processo, visualização) precisam de `[collectors.SEI.frames]`, indicando para cada
-seletor o iframe que o contém. Valide com `consultar SEI NUMERO` antes do lote.
+seletor o iframe que o contém. Valide com `diagnostico --sistema SEI --processo
+NUMERO` antes do lote.
+
+### Unidades abertas
+
+Se a consulta não encontra nenhuma unidade aberta, o resultado é falha
+(`UNIDADES_AUSENTES`), não "nenhuma unidade": um seletor quebrado geraria alerta
+falso de mudança de unidade em todos os processos. Processo concluído, sem
+unidade aberta, deve ser inativado no Cadastro Mestre.
 
 ### Ritmo e proteção da rodada
 

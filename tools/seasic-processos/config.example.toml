@@ -50,6 +50,7 @@ enabled = false
 # true só para run/consultar sem janela; login sempre abre o navegador visível.
 headless = false
 entry_url = ""
+# Perfil do navegador com a sessão salva (padrão: browser_profiles/sei); pasta restrita.
 profile_path = "browser_profiles/sei"
 # Processo de referência consultado primeiro; se falhar, a rodada para (layout mudou).
 # Precisa estar ativo no Cadastro Mestre. Vazio = sem processo de referência.

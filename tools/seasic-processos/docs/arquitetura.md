@@ -80,6 +80,11 @@ Em série, um processo por vez, com:
 
 ## Operação
 
+- `diagnostico` confere a implantação e, com um processo conhecido, mostra cada
+  passo da consulta (seletor por seletor) sem gravar nada — apoio ao mapeamento
+  de seletores no ambiente institucional.
+- Nenhuma unidade aberta encontrada é falha de extração, nunca "conjunto vazio".
+
 - `rotina` executa o dia inteiro (coleta → resumo e visão em arquivo → planilha →
   backup com rotação → limpeza de logs), com etapas isoladas e código de saída 1
   quando alguma falha.

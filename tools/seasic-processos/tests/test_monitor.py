@@ -356,6 +356,12 @@ class MonitorDatabaseTests(unittest.TestCase):
         again = render_executive_summary(self.database.pending_occurrences())
         self.assertIn("Nenhuma novidade desde o último resumo.", again)
 
+    def test_missing_profile_path_defaults_to_browser_profiles(self) -> None:
+        config = PlaywrightCollectorConfig.from_mapping("EDOC", {}, self.temp_dir.name)
+        self.assertEqual(
+            config.profile_path, Path(self.temp_dir.name) / "browser_profiles" / "edoc"
+        )
+
     def test_frames_must_reference_configured_selectors(self) -> None:
         with self.assertRaises(ValueError):
             PlaywrightCollectorConfig.from_mapping(

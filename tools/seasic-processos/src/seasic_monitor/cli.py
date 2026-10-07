@@ -12,6 +12,13 @@ import tomllib
 
 from .collectors import LiveCollectionDisabled
 from .database import MonitorDatabase
+from .diagnostico import (
+    checks_passed,
+    render_checks,
+    render_trace,
+    static_checks,
+    trace_consultation,
+)
 from .logs import LogSettings, configure_logging
 from .domain import (
     BRAZIL_TZ,
@@ -62,6 +69,12 @@ def _parser() -> argparse.ArgumentParser:
     )
     view.add_argument("--format", choices=("markdown", "csv"), default="markdown")
     view.add_argument("--saida", type=Path, help="Grava em arquivo em vez de imprimir.")
+    diagnosis = commands.add_parser(
+        "diagnostico",
+        help="Confere a configuração; com --sistema e --processo, consulta passo a passo sem gravar.",
+    )
+    diagnosis.add_argument("--sistema", help="SEI ou e-DOC (para a consulta passo a passo)")
+    diagnosis.add_argument("--processo", help="Número de um processo conhecido")
     commands.add_parser(
         "rotina",
         help="Rotina diária: coleta, resumo e visão em arquivo, planilha, backup e limpeza de logs.",
@@ -118,6 +131,9 @@ def _load_config(config_argument: str | None) -> tuple[dict, Path]:
         else PACKAGE_ROOT / "config.toml"
     )
     if not config_path.exists():
+        if config_argument:
+            # Um caminho informado e inexistente é erro de digitação, não "sem config".
+            raise ValueError(f"Arquivo de configuração não encontrado: {config_path}")
         return {}, PACKAGE_ROOT
     with config_path.open("rb") as file:
         return tomllib.load(file), config_path.resolve().parent
@@ -205,6 +221,26 @@ def _run(args: argparse.Namespace) -> int:
         args.command, args.sistema = "login", "EDOC"
     if args.command == "run-edoc":
         args.command, args.sistema = "run", "EDOC"
+    if args.command == "diagnostico":
+        if bool(args.sistema) != bool(args.processo):
+            raise ValueError("Use --sistema e --processo juntos.")
+        if args.processo:
+            system = canonical_system(args.sistema)
+            trace, observation = asyncio.run(
+                trace_consultation(
+                    system, args.processo, _collector_settings(config, system), config_dir
+                )
+            )
+            print(render_trace(system, args.processo, trace, observation), end="")
+            return 0 if observation is not None and observation.is_valid else 1
+        config_path = (
+            Path(args.config).expanduser() if args.config else PACKAGE_ROOT / "config.toml"
+        )
+        checks = static_checks(
+            config, config_path if config_path.exists() else None, config_dir, database
+        )
+        print(render_checks(checks), end="")
+        return 0 if checks_passed(checks) else 1
     if args.command not in {"run", "login", "consultar"}:
         database.initialize()
     if args.command in {"run", "rotina", "planilha", "consultar"}:
